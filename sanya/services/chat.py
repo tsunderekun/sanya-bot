@@ -10,7 +10,7 @@ from aiogram import Bot, types
 from aiogram.enums import ChatType
 from aiogram.types import BufferedInputFile
 
-from ..config import ENABLE_WEB_SEARCH, ORIGINAL_SANYA_ID
+from ..config import CHAT_STICKER_CHANCE, ENABLE_WEB_SEARCH, ORIGINAL_SANYA_ID
 from ..database import Database
 from ..handlers.hardware import send_price_estimate
 from ..intent import (
@@ -542,7 +542,7 @@ async def process_chat_message(
         "assistant",
         result,
     )
-    if mode is Mode.CHAT and sticker:
+    if mode is Mode.CHAT and sticker and random.random() < CHAT_STICKER_CHANCE:
         await send_sanya_sticker(
             bot,
             chat_id,

@@ -11,7 +11,8 @@ SLOIPER_DIR = Path(
         "SLOIPER_DIR", str(Path(__file__).resolve().parents[1] / "data" / "sloiper")
     )
 )
-SLOIPER_CHANCE = max(0.0, min(1.0, float(os.getenv("SLOIPER_CHANCE", "0.4"))))
+SLOIPER_CHANCE = max(0.0, min(1.0, float(os.getenv("SLOIPER_CHANCE", "0.2"))))
+CHAT_STICKER_CHANCE = max(0.0, min(1.0, float(os.getenv("CHAT_STICKER_CHANCE", "0.2"))))
 MEME_DONOR_CHANNEL_IDS = {
     int(item)
     for raw in os.getenv("MEME_DONOR_CHANNEL_IDS", "").split(",")
