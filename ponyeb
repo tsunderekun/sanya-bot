@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+
+# Утилита управления сервисами Сани Пониёба (Ollama + SearXNG + TG Bot)
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+function start_services() {
+    echo -e "${CYAN}[*] Врубаем сервисы Сани...${NC}"
+    systemctl --user start searxng.service
+    systemctl --user start ollama.service
+    sleep 1
+    systemctl --user start sanya-bot.service
+    sleep 1
+
+    if systemctl --user is-active --quiet ollama.service && systemctl --user is-active --quiet sanya-bot.service && systemctl --user is-active --quiet searxng.service; then
+        echo -e "${GREEN}[+] Саня Пониёб онлайн! (Ollama + SearXNG + TG Bot работают)${NC}"
+    else
+        echo -e "${RED}[!] Проверь статус сервисов:${NC}"
+        status_services
+    fi
+}
+
+function stop_services() {
+    echo -e "${YELLOW}[*] Вырубаем сервисы Сани...${NC}"
+    systemctl --user stop sanya-bot.service
+    systemctl --user stop ollama.service
+    systemctl --user stop searxng.service
+    echo -e "${GREEN}[+] Саня ухрап (Ollama, SearXNG и Telegram-бот остановлены, VRAM свободен)${NC}"
+}
+
+function status_services() {
+    echo -e "${CYAN}--- Статус сервисов Сани Пониёба ---${NC}"
+
+    if systemctl --user is-active --quiet searxng.service; then
+        echo -e "SearXNG:    ${GREEN}[ACTIVE / RUNNING]${NC} (http://localhost:8080)"
+    else
+        echo -e "SearXNG:    ${RED}[STOPPED]${NC}"
+    fi
+
+    if systemctl --user is-active --quiet ollama.service; then
+        echo -e "Ollama:     ${GREEN}[ACTIVE / RUNNING]${NC}"
+    else
+        echo -e "Ollama:     ${RED}[STOPPED]${NC}"
+    fi
+
+    if systemctl --user is-active --quiet sanya-bot.service; then
+        echo -e "TG Bot:     ${GREEN}[ACTIVE / RUNNING]${NC}"
+    else
+        echo -e "TG Bot:     ${RED}[STOPPED]${NC}"
+    fi
+}
+
+function restart_services() {
+    echo -e "${CYAN}[*] Перезапускаем сервисы...${NC}"
+    systemctl --user restart searxng.service
+    systemctl --user restart ollama.service
+    systemctl --user restart sanya-bot.service
+    sleep 1
+    status_services
+}
+
+function show_logs() {
+    echo -e "${CYAN}[*] Логи переписки в реальном времени (Ctrl+C для выхода):${NC}"
+    journalctl --user -u sanya-bot.service -f
+}
+
+case "$1" in
+    on|start)
+        start_services
+        ;;
+    off|stop)
+        stop_services
+        ;;
+    status)
+        status_services
+        ;;
+    restart)
+        restart_services
+        ;;
+    logs|log)
+        show_logs
+        ;;
+    *)
+        echo -e "Использование: ${CYAN}ponyeb {on|off|status|restart|logs}${NC}"
+        echo -e "  ${GREEN}ponyeb on${NC}      - Врубить Ollama, SearXNG и Telegram-бота"
+        echo -e "  ${YELLOW}ponyeb off${NC}     - Вырубить все сервисы и освободить память"
+        echo -e "  ${CYAN}ponyeb status${NC}  - Проверить состояние сервисов"
+        echo -e "  ${CYAN}ponyeb restart${NC} - Перезапустить бота, SearXNG и Ollama"
+        echo -e "  ${CYAN}ponyeb logs${NC}    - Смотреть логи бота в реальном времени"
+        exit 1
+        ;;
+esac

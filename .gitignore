@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Secrets & Environment
+.env
+.env.local
+
+# Databases & logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Chat dumps and sensitive data
+result.json
+*.jsonl
+
+# Temporary & test files
+1
+scratch/
+test_*.py
+match_*.py
+check_*.py
+extract_*.py

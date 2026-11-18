@@ -1,0 +1,20 @@
+FROM /home/kunetska/sanya-bot/gemma-4-12b-it-Q4_K_M.gguf
+
+TEMPLATE """{{ if .System }}<|turn>system
+{{ .System }}<turn|>
+{{ end }}{{ range .Messages }}{{ if eq .Role "user" }}<|turn>user
+{{ .Content }}<turn|>
+{{ else if eq .Role "assistant" }}<|turn>model
+{{ .Content }}<turn|>
+{{ end }}{{ end }}<|turn>model
+<|channel>thought
+<channel|>
+"""
+
+PARAMETER stop "<turn|>"
+PARAMETER stop "<|turn>"
+PARAMETER temperature 0.70
+PARAMETER top_p 0.90
+PARAMETER repeat_penalty 1.15
+PARAMETER repeat_last_n 160
+PARAMETER num_ctx 16384
