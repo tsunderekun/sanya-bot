@@ -203,46 +203,19 @@ OS_COMMAND_REQUEST_PATTERN = re.compile(
 )
 
 
-def is_targeted_insult(
-    text: str, is_reply_to_bot: bool = False, is_called_by_name: bool = False
-) -> bool:
-    """
-    Определяет, направлено ли оскорбление лично на Саня (2-е лицо / приказ / троллинг бота),
-    или же в сообщении обсуждают кого-то третьего (продавца на Авито, барыгу, провайдера, другого кента).
-    """
-    clean = text.strip()
+_DIRECT_HOSTILITY = re.compile(
+    r"(?:спермер[\s,:]+)?(?:"
+    r"(?:иди|вали|пош[её]л)\s+нахуй|"
+    r"завали\s+(?:ебал[оа]|рот)|"
+    r"закрой\s+(?:свой\s+)?рот"
+    r")[.!]*",
+    re.IGNORECASE,
+)
 
-    # Если в начале сообщения явное обращение к другому человеку (например "Витя пошел нахуй", "Жидкер соси"):
-    # это наезд на другого кента, а не на Саня!
-    if (
-        OTHER_MEMBER_ADDRESSING.search(clean)
-        and not is_reply_to_bot
-        and not is_called_by_name
-    ):
-        return False
 
-    # 1. Прямой наезд на 2-е лицо (ты, тебя, твою мать и т.д.) или вопрос-ловушка ("где тебя ебали")
-    if TARGETED_2ND_PERSON.search(clean):
-        return True
-
-    # 2. Обращение к Сане + оскорбление / провокационный вопрос
-    if SANYA_TARGETED_INSULT.search(clean):
-        return True
-
-    # 3. Повелительные оскорбительные действия (соси, присядь на бутылку, пошел нахуй)
-    if IMPERATIVE_ACTION_TARGETED.search(clean):
-        return True
-
-    # 4. Если сообщение в реплай боту и состоит из короткого ругательства
-    if is_reply_to_bot:
-        short_insult = re.compile(
-            rf"^(ну\s+и\s+)?({OFFENSIVE_STATUS_NOUNS}|затянулся\s+спермой|спермобак)[!?.]*$",
-            re.IGNORECASE,
-        )
-        if short_insult.search(clean):
-            return True
-
-    return False
+def is_targeted_insult(text: str, *, addressed: bool = False) -> bool:
+    # Context, not vocabulary alone, decides whether a joke is hostile.
+    return addressed and bool(_DIRECT_HOSTILITY.fullmatch(text.strip()))
 
 
 CODING_TRIGGER_PATTERN = re.compile(

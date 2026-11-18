@@ -9,7 +9,7 @@ from aiogram.enums import ChatType
 from sanya.handlers.basic import cmd_clear
 from sanya.handlers.command_args import reply_html_lines
 from sanya.handlers.media import cmd_search
-from sanya.handlers.memory import cmd_delchat, cmd_setchat
+from sanya.handlers.memory import cmd_delchat, cmd_mydata, cmd_setchat
 from sanya.handlers.stickers import pack_name_from_arg
 from sanya.lore import INITIAL_KENTS_PROFILES
 from sanya.repository import Repository
@@ -23,9 +23,86 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
             text="/clear",
             reply=AsyncMock(),
             from_user=SimpleNamespace(id=7),
+            reply_to_message=None,
             chat=SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP, title="chat"),
         )
         self.db = SimpleNamespace(run=AsyncMock())
+
+    async def test_mydata_without_target_returns_own_profile(self):
+        self.message.text = "/досье"
+        self.db.run.side_effect = [
+            dict(
+                user_name="caller",
+                first_seen="first",
+                last_seen="last",
+                message_count=4,
+                persona_notes="own note",
+            ),
+            [{"fact_text": "own fact"}],
+        ]
+        await cmd_mydata(self.message, self.db)
+        self.db.run.assert_any_await(Repository.get_user_profile, 7)
+        self.db.run.assert_any_await(Repository.get_self_facts, -1001, 7, 5)
+        text = self.message.reply.await_args.args[0]
+        for fragment in ("про тебя", "own note", "own fact", "/forgetme"):
+            self.assertIn(fragment, text)
+
+    async def test_mydata_target_only_shows_current_group_count(self):
+        self.message.text = "/досье@ponyeb228_bot\n@other_user"
+        profile = dict(user_id=8, user_name="other_user", persona_notes="private notes")
+        self.db.run.side_effect = [profile, 12, profile]
+        await cmd_mydata(self.message, self.db)
+        self.db.run.assert_any_await(
+            Repository.find_user_by_username, "other_user", current_only=True
+        )
+        self.db.run.assert_any_await(Repository.count_user_chat_messages, -1001, 8)
+        self.db.run.assert_any_await(Repository.get_user_profile, 8)
+        self.assertEqual(self.db.run.await_count, 3)
+        text = self.message.reply.await_args.args[0]
+        self.assertIn("<b>other_user</b>", text)
+        self.assertIn("<code>8</code>", text)
+        self.assertIn("этого чата: 12", text)
+        self.assertNotIn("private notes", text)
+        self.assertNotIn("/forgetme", text)
+
+    async def test_mydata_unknown_tag_never_falls_back_to_reply_or_self(self):
+        self.message.text = "/досье @unknown"
+        self.message.reply_to_message = SimpleNamespace(
+            from_user=SimpleNamespace(id=8, username="someone")
+        )
+        self.db.run.return_value = None
+        await cmd_mydata(self.message, self.db)
+        self.db.run.assert_awaited_once_with(
+            Repository.find_user_by_username, "unknown", current_only=True
+        )
+        self.message.reply.assert_awaited_once_with(
+            "В базе про @unknown ничего нет\nНе нарыл инфы братан"
+        )
+
+    async def test_mydata_reply_and_id_use_the_other_profile(self):
+        profile = dict(user_id=8, user_name="other_user")
+        self.message.reply_to_message = SimpleNamespace(
+            from_user=SimpleNamespace(id=8, username="other_user")
+        )
+        for text, results in (
+            ("/досье", [0, profile]),
+            ("/досье 8", [profile, 0, profile]),
+        ):
+            with self.subTest(text=text):
+                self.message.text = text
+                self.db.run.side_effect = results
+                await cmd_mydata(self.message, self.db)
+                self.assertIn("<code>8</code>", self.message.reply.await_args.args[0])
+
+    async def test_mydata_checks_membership_when_group_history_is_missing(self):
+        self.message.text = "/досье @other_user"
+        self.message.chat.get_member = AsyncMock(
+            return_value=SimpleNamespace(status="left")
+        )
+        self.db.run.side_effect = [dict(user_id=8, user_name="other_user"), 0]
+        await cmd_mydata(self.message, self.db)
+        self.message.chat.get_member.assert_awaited_once_with(8)
+        self.assertIn("ничего нет", self.message.reply.await_args.args[0])
 
     async def test_clear_requires_group_admin_and_reports_database_failure(self):
         with patch(

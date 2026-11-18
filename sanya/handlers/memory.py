@@ -4,6 +4,8 @@ import logging
 import re
 
 from aiogram import Bot, F, Router, types
+from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -203,10 +205,65 @@ async def cb_forgetme(query: CallbackQuery, db: Database):
 async def cmd_mydata(message: types.Message, db: Database):
     if not message.from_user:
         return
-    user_id = message.from_user.id
+    caller_id = message.from_user.id
+    args = command_args(message)
+    reply = message.reply_to_message
+    label = args[:64]
+    user_id = caller_id
+    if args or reply:
+        user_id, target, remaining, error = await resolve_target_user(
+            db, message, args, allow_kent_aliases=True
+        )
+        if remaining or (user_id is None and not error):
+            await message.reply("Укажи один @ник, ID или вызови /досье реплаем.")
+            return
+        if error and not error.startswith("Не могу подтвердить"):
+            await message.reply(error)
+            return
+        label = label or target[:64]
+
+    async def not_found():
+        await message.reply(f"В базе про {label} ничего нет\nНе нарыл инфы братан")
+
+    if user_id is None:
+        await not_found()
+        return
+    if user_id != caller_id:
+        if message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+            await message.reply("Чужое досье доступно только в общей группе.")
+            return
+        count = await db.run(
+            Repository.count_user_chat_messages, message.chat.id, user_id
+        )
+        if not count and not (
+            reply and reply.from_user and reply.from_user.id == user_id
+        ):
+            try:
+                member = await message.chat.get_member(user_id)
+            except TelegramAPIError:
+                await not_found()
+                return
+            if member.status in ("left", "kicked") or not getattr(
+                member, "is_member", True
+            ):
+                await not_found()
+                return
     prof = await db.run(Repository.get_user_profile, user_id)
     if not prof:
-        await message.reply("в базе про тебя вообще ничего нет\nты призрак нахуй")
+        if user_id == caller_id:
+            await message.reply("в базе про тебя вообще ничего нет\nты призрак нахуй")
+        else:
+            await not_found()
+        return
+
+    if user_id != caller_id:
+        name = html.escape((target or str(user_id))[:64])
+        await message.reply(
+            f"че я помню про <b>{name}</b> в базе:\n"
+            f"id: <code>{user_id}</code>\n"
+            f"сообщений в истории этого чата: {count}",
+            parse_mode="HTML",
+        )
         return
 
     first_seen = prof["first_seen"]

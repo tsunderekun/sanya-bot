@@ -540,6 +540,12 @@ class Repository:
         except Exception as e:
             logging.error(f"Ошибка обновления профиля пользователя {user_id}: {e}")
 
+    def count_user_chat_messages(self, chat_id: int, user_id: int) -> int:
+        return self.connection.execute(
+            "SELECT COUNT(*) FROM messages WHERE chat_id = ? AND user_id = ? AND role = 'user'",
+            (chat_id, user_id),
+        ).fetchone()[0]
+
     def get_user_profile(self, user_id: int) -> Optional[sqlite3.Row]:
         """Возвращает сохраненный профиль пользователя из БД."""
         try:
