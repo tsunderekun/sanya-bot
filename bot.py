@@ -42,6 +42,8 @@ MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "20"))
 USER_COOLDOWN_SECONDS = float(os.getenv("USER_COOLDOWN_SECONDS", "5.0"))
 MAX_PROACTIVE_PER_HOUR = int(os.getenv("MAX_PROACTIVE_PER_HOUR", "3"))
 NUM_PREDICT_CHAT = int(os.getenv("NUM_PREDICT_CHAT", "400"))
+ENABLE_THINKING = os.getenv("ENABLE_THINKING", "true").lower() in ("1", "true", "yes")
+NUM_PREDICT_THINK = int(os.getenv("NUM_PREDICT_THINK", "1500"))
 
 # Глобальное состояние для кулдауна юзеров и проактивных реплик
 user_last_request_time: Dict[int, float] = {}
@@ -2371,7 +2373,7 @@ async def search_and_download_booru_image(query: str, max_candidates: int = 15) 
 
 
 async def query_llm(messages: List[Dict[str, str]], is_detailed_request: bool = False, is_coding_request: bool = False) -> str:
-    """Запрос к Ollama через /api/chat с prefill '</think>'."""
+    """Запрос к Ollama через /api/chat с поддержкой рассуждений (thinking)."""
     endpoint = OPENAI_BASE_URL.replace("/v1", "").rstrip("/") + "/api/chat"
 
     full_messages = (
@@ -2379,22 +2381,24 @@ async def query_llm(messages: List[Dict[str, str]], is_detailed_request: bool = 
         + messages
     )
 
+    think_enabled = ENABLE_THINKING
+
     if is_coding_request:
-        predict_tokens = 3500
+        predict_tokens = 4500 if think_enabled else 3500
         temp = 0.60
     elif is_detailed_request:
-        predict_tokens = 2400
+        predict_tokens = 3200 if think_enabled else 2400
         temp = 0.70
     else:
-        # Для вариативного бёрста (2-5 коротких строк) с надежным запасом токенов на кириллицу (конфиг: 400)
-        predict_tokens = NUM_PREDICT_CHAT
+        # Для вариативного бёрста с запасом на рассуждения (thinking) + финальный ответ Сани (400)
+        predict_tokens = NUM_PREDICT_THINK if think_enabled else NUM_PREDICT_CHAT
         temp = 0.75
 
     payload = {
         "model": MODEL_NAME,
         "messages": full_messages,
         "stream": False,
-        "think": False,
+        "think": think_enabled,
         "options": {
             "temperature": temp,
             "top_p": 0.90,
@@ -2412,8 +2416,26 @@ async def query_llm(messages: List[Dict[str, str]], is_detailed_request: bool = 
                 response.raise_for_status()
                 data = response.json()
                 msg = data.get("message", {})
+                thinking = (msg.get("thinking") or "").strip()
                 content = (msg.get("content") or "").strip()
                 content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).replace("</think>", "").replace("<think>", "").strip()
+
+                if thinking:
+                    first_line = thinking.split('\n')[0][:120]
+                    logging.info(f"[{MODEL_NAME} Thinking ({len(thinking)} chars)]: {first_line}...")
+
+                # Защита от исчерпания токенов на рассуждениях (когда весь лимит ушел в thinking и content остался пустым)
+                if not content and think_enabled:
+                    logging.warning(f"[{MODEL_NAME}] Пустой ответ при включенном thinking. Выполняем быстрый фоллбэк с think=False...")
+                    fallback_payload = dict(payload)
+                    fallback_payload["think"] = False
+                    fallback_payload["options"] = dict(payload["options"])
+                    fallback_payload["options"]["num_predict"] = NUM_PREDICT_CHAT
+                    fb_resp = await client.post(endpoint, json=fallback_payload)
+                    if fb_resp.status_code == 200:
+                        fb_msg = fb_resp.json().get("message", {})
+                        content = (fb_msg.get("content") or "").strip()
+                        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).replace("</think>", "").replace("<think>", "").strip()
 
                 if not content:
                     return "Че кезднуть\nИли че"
