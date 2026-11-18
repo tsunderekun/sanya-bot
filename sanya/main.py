@@ -21,7 +21,7 @@ from .config import (
     TELEGRAM_PROXY,
 )
 from .database import Database
-from .handlers import basic, chat, media, memory, stickers
+from .handlers import basic, chat, hardware, media, memes, memory, stickers
 from .llm import Ollama
 from .services.chat import process_chat_message
 from .services.queue import RequestQueue
@@ -34,6 +34,8 @@ def build_dispatcher() -> Dispatcher:
         basic.make_router(),
         memory.make_router(),
         media.make_router(),
+        memes.make_router(),
+        hardware.make_router(),
         stickers.make_router(),
         chat.make_router(),
     )
@@ -100,6 +102,11 @@ async def register_commands(bot: Bot):
             [
                 BotCommand(command="help", description="Все команды и гайд по лору"),
                 BotCommand(command="pic", description="Найти картинку"),
+                BotCommand(command="meme", description="Случайный канальный мем"),
+                BotCommand(command="hardware", description="Показать конфиг железа"),
+                BotCommand(
+                    command="price", description="Прикинуть цену железки по Авито"
+                ),
                 BotCommand(command="booru", description="Поиск артов Booru / R34"),
                 BotCommand(command="s", description="Поиск в интернете"),
                 BotCommand(

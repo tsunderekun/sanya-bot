@@ -25,6 +25,7 @@ result.json
 # Temporary & test files
 1
 scratch/
+/data/sloiper/
 test_*.py
 !tests/test_*.py
 match_*.py

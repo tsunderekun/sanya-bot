@@ -6,6 +6,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+SLOIPER_DIR = Path(
+    os.getenv(
+        "SLOIPER_DIR", str(Path(__file__).resolve().parents[1] / "data" / "sloiper")
+    )
+)
+SLOIPER_CHANCE = max(0.0, min(1.0, float(os.getenv("SLOIPER_CHANCE", "0.4"))))
+MEME_DONOR_CHANNEL_IDS = {
+    int(item)
+    for raw in os.getenv("MEME_DONOR_CHANNEL_IDS", "").split(",")
+    if (item := raw.strip()).removeprefix("-").isdecimal()
+}
+TESSERACT_CMD = os.getenv("TESSERACT_CMD", "tesseract")
+OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() in ("1", "true", "yes")
+
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://localhost:11434")
 MODEL_NAME = os.getenv("MODEL_NAME", "sanya:latest")

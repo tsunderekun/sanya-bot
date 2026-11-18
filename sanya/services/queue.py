@@ -15,6 +15,7 @@ class Request:
     force_image_query: str | None = None
     force_booru_query: str | None = None
     is_proactive: bool = False
+    force_price_query: str | None = None
 
 
 class RequestQueue:
@@ -52,6 +53,11 @@ class RequestQueue:
                     force_image_query=item.force_image_query,
                     force_booru_query=item.force_booru_query,
                     is_proactive=item.is_proactive,
+                    **(
+                        {"force_price_query": item.force_price_query}
+                        if item.force_price_query
+                        else {}
+                    ),
                 )
             except Exception:
                 logging.exception("Ошибка обработки сообщения из очереди")

@@ -14,6 +14,30 @@ def initialize(conn):
                 f"Unexpected legacy table {alternate}; expected {actual}. Check DB_PATH and schema."
             )
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS channel_memes (
+            id INTEGER PRIMARY KEY,
+            channel_id INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,
+            media_type TEXT NOT NULL CHECK(media_type IN ('photo', 'video', 'animation')),
+            file_id TEXT NOT NULL,
+            file_unique_id TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (channel_id, message_id)
+        );
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS booru_history (
+            id INTEGER PRIMARY KEY,
+            chat_id INTEGER NOT NULL,
+            image_id TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (chat_id, image_id)
+        );
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_booru_recent ON booru_history(chat_id, id DESC)"
+    )
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER NOT NULL,

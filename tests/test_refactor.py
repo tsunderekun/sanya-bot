@@ -101,8 +101,8 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(estimate_tokens(fitted), 8500)
 
     def test_router_builds_twice(self):
-        self.assertEqual(build_dispatcher().resolve_used_update_types(), ["callback_query", "message"])
-        self.assertEqual(build_dispatcher().resolve_used_update_types(), ["callback_query", "message"])
+        self.assertEqual(build_dispatcher().resolve_used_update_types(), ["callback_query", "channel_post", "message"])
+        self.assertEqual(build_dispatcher().resolve_used_update_types(), ["callback_query", "channel_post", "message"])
 
 
 class DatabaseTests(unittest.IsolatedAsyncioTestCase):

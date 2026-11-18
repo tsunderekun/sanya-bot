@@ -19,6 +19,46 @@ class Repository:
     def __init__(self, connection: sqlite3.Connection):
         self.connection = connection
 
+    def save_channel_meme(
+        self, channel_id, message_id, media_type, file_id, file_unique_id
+    ):
+        with self.connection as conn:
+            conn.execute(
+                "INSERT INTO channel_memes (channel_id, message_id, media_type, file_id, file_unique_id) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(channel_id, message_id) DO NOTHING",
+                (channel_id, message_id, media_type, file_id, file_unique_id),
+            )
+
+    def random_channel_memes(self, limit=3):
+        return self.connection.execute(
+            "SELECT media_type, file_id FROM channel_memes ORDER BY RANDOM() LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+    def recent_booru_ids(self, chat_id):
+        return {
+            row[0]
+            for row in self.connection.execute(
+                "SELECT image_id FROM booru_history WHERE chat_id = ?", (chat_id,)
+            )
+        }
+
+    def remember_booru_image(self, chat_id, image_id):
+        with self.connection as conn:
+            conn.execute(
+                "DELETE FROM booru_history WHERE chat_id = ? AND image_id = ?",
+                (chat_id, image_id),
+            )
+            conn.execute(
+                "INSERT INTO booru_history (chat_id, image_id) VALUES (?, ?)",
+                (chat_id, image_id),
+            )
+            conn.execute(
+                "DELETE FROM booru_history WHERE chat_id = ? AND id <= ("
+                "SELECT id FROM booru_history WHERE chat_id = ? ORDER BY id DESC LIMIT 1 OFFSET 200)",
+                (chat_id, chat_id),
+            )
+
     def add_sticker_pack(
         self,
         pack_name: str,

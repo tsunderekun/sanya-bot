@@ -1,6 +1,7 @@
 """Character voice, response contracts, and opt-in lore for the Ollama prompt."""
 
 import re
+from random import random
 
 from .intent import Mode
 
@@ -82,10 +83,23 @@ TOPICS = tuple(
 )
 
 
+_AI_TOPIC = re.compile(
+    r"\b(?:sd(?:xl)?|stable\s+diffusion|comfyui|automatic1111|lora|чекпоинт\w*|с[эе]мплер\w*|ddim|euler|cfg|апскейл\w*|controlnet|промпт\w*|ollama|оллам\w*|квант\w*|gguf|инференс\w*|vllm)\b",
+    re.IGNORECASE,
+)
+_AI_EXPERT = (
+    "Включи экспертный режим по ИИ только в тему вопроса: для артов предложи подходящие ноды ComfyUI, "
+    "DPM++ 2M Karras, Pony XL или AutismMix, если они совместимы; для слабых карт объясни, когда уместен Q4_K_M. "
+    "При необходимости уточни модель, VRAM, граф нод или промпт. Не перечисляй всё подряд."
+)
+
+
 def build_system_prompt(mode: Mode, context: str = "", *directives: str) -> str:
     parts = [SYSTEM_PROMPT]
     if mode in (Mode.CHAT, Mode.DETAIL):
         parts.append(SOCIAL)
+        if _AI_TOPIC.search(context[:2000]) and random() < 0.10:
+            parts.append(_AI_EXPERT)
     if mode is not Mode.CODE:
         text = context[:2000]
         matches = [

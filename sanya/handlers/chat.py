@@ -17,6 +17,7 @@ from ..observations import message_self_facts
 from ..repository import Repository
 from ..services.queue import RequestQueue
 from ..services.stickers import try_react_whale
+from .memes import maybe_send_horse
 
 
 async def handle_message(
@@ -81,7 +82,14 @@ async def handle_message(
     background_blocked = not should_respond and (
         bool(self_facts) or suppress_background_reply(address_text)
     )
-    if not background_blocked and not self_facts:
+    horse_sent = False
+    if (
+        not should_respond
+        and not background_blocked
+        and message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+    ):
+        horse_sent = await maybe_send_horse(message, address_text)
+    if not background_blocked and not self_facts and not horse_sent:
         await try_react_whale(message)
 
     # Проверка на проактивный ответ Сани на любимые темы (max 3 в час на чат)
@@ -89,6 +97,7 @@ async def handle_message(
     if (
         not should_respond
         and not background_blocked
+        and not horse_sent
         and not is_private
         and not is_from_original_sanya
         and not (message.from_user and message.from_user.is_bot)
