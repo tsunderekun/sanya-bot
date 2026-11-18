@@ -31,3 +31,8 @@ test_*.py
 match_*.py
 check_*.py
 extract_*.py
+
+# Agent handoff & review notes
+*HANDOFF*.md
+LORE_REVIEW.md
+TASK_*.md
