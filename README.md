@@ -1,5 +1,7 @@
 # 🤖 Telegram-бот «Саня Пониёб» (@ponyeb228_bot)
 
+> Модульная версия: точка входа `python bot.py`, код в `sanya/`. Перед обновлением существующей БД см. [инструкцию перехода](MIGRATION.md).
+
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![aiogram 3.x](https://img.shields.io/badge/aiogram-3.x-2CA5E0.svg)](https://docs.aiogram.dev/)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-orange.svg)](https://ollama.com/)
@@ -97,7 +99,7 @@ ADMIN_IDS=123456789
 
 # Скользящее окно памяти на чат (сообщений / символов)
 MAX_HISTORY_LENGTH=25
-MAX_CONTEXT_CHARS=22000
+MAX_CONTEXT_CHARS=14000
 
 # SOCKS5 / HTTP прокси (оставьте пустым, если Telegram работает без блокировок)
 TELEGRAM_PROXY=

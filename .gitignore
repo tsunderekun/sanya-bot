@@ -26,6 +26,7 @@ result.json
 1
 scratch/
 test_*.py
+!tests/test_*.py
 match_*.py
 check_*.py
 extract_*.py
