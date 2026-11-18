@@ -4085,11 +4085,13 @@ async def process_chat_message(
     )
     is_detailed_request = bool(DETAILED_REQUEST_PATTERN.search(clean_text))
     is_prompt_request = bool(re.search(
-        r"\b(напиши|дай|скинь|составь|сделай|набросай|какой|посоветуй)\s+.*?(промпт|промт|prompt)\b|"
-        r"\b(промпт|промт|prompt)\s+(для|на|под)\s+.*?(пони|коней|тейбл|стейбл|нейронк|sd|генерац)\b",
+        r"\b(напиши|дай|скинь|составь|сделай|набросай|какой|посоветуй|накидай)\s+.*?(промпт|промт|prompt)\b|"
+        r"\b(промпт|промт|prompt)\s+(для|на|под)\s+.*?(пони|коней|тейбл|стейбл|нейронк|sd|сд|sdxl|сдхл|генерац)\b",
         clean_text,
         re.IGNORECASE
     ))
+    if is_prompt_request:
+        is_detailed_request = True
     is_insult = is_targeted_insult(
         clean_text,
         is_reply_to_bot=is_reply_to_bot,
@@ -4167,6 +4169,11 @@ async def process_chat_message(
                 "КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО симулировать запуск терминала, отшучиваться одной фразой или писать 'процесс остановлен' без кода! "
                 "Перед блоком кода черкани пару живых пацанских фраз от Сани Пониёба без академизма («базаришь», «держи говнокод», «чисто защеку накидал»). "
                 "Выдай полный рабочий скрипт целиком!"
+            )
+        elif is_prompt_request:
+            instruction_text = (
+                "Собеседник прямо просит составить промпт для нейросети / Stable Diffusion (SDXL / Pony Diffusion). "
+                "Выдай пару живых пацанских фраз от Сани Пониёба и ОБЯЗАТЕЛЬНО выдай полный блок ```prompt ... ``` со всеми тегами (positive prompt) и Negative prompt целиком без обрывов!"
             )
         elif is_detailed_request:
             instruction_text = (
