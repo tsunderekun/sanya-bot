@@ -104,17 +104,26 @@ async def cmd_meme(message: types.Message, db: Database):
     if not candidates:
         candidates = await public_memes()
         random.shuffle(candidates)
-    for kind, media in candidates[:3]:
+    for kind, media in candidates[:5]:
         send = {
             "photo": message.answer_photo,
             "video": message.answer_video,
             "animation": message.answer_animation,
         }[kind]
         try:
-            await send(media)
+            if media.startswith(("http://", "https://")):
+                proxy = TELEGRAM_PROXY or SEARCH_PROXY or None
+                async with httpx.AsyncClient(proxy=proxy, timeout=12) as client:
+                    resp = await client.get(media)
+                    resp.raise_for_status()
+                ext = "mp4" if kind == "video" else ("gif" if kind == "animation" else "jpg")
+                payload = types.BufferedInputFile(resp.content, filename=f"meme.{ext}")
+            else:
+                payload = media
+            await send(payload)
             return
-        except (TelegramBadRequest, TelegramForbiddenError):
-            logger.debug("Telegram не принял медиа из пула мемов")
+        except (TelegramBadRequest, TelegramForbiddenError, httpx.HTTPError) as err:
+            logger.debug("Telegram не принял медиа из пула мемов: %s", err)
     await message.reply("Не нашёл мем, который могу отправить.")
 
 
