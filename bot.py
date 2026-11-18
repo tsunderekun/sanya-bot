@@ -41,6 +41,7 @@ MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "24000"))
 MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "20"))
 USER_COOLDOWN_SECONDS = float(os.getenv("USER_COOLDOWN_SECONDS", "5.0"))
 MAX_PROACTIVE_PER_HOUR = int(os.getenv("MAX_PROACTIVE_PER_HOUR", "3"))
+NUM_PREDICT_CHAT = int(os.getenv("NUM_PREDICT_CHAT", "400"))
 
 # Глобальное состояние для кулдауна юзеров и проактивных реплик
 user_last_request_time: Dict[int, float] = {}
@@ -771,23 +772,39 @@ class ChatMemory:
 
     def delete_chat_lore_entry(self, entry_id: int, chat_id: Optional[int] = None) -> Optional[Tuple[int, str]]:
         """Удаляет отдельный факт лора конфы по ID. Возвращает (chat_id, content) при успехе."""
+        res = self.delete_chat_lore_entries([entry_id], chat_id)
+        if res:
+            return res[0][1], res[0][2]
+        return None
+
+    def delete_chat_lore_entries(self, entry_ids: List[int], chat_id: Optional[int] = None) -> List[Tuple[int, int, str]]:
+        """
+        Удаляет пачку записей лора конфы по списку ID.
+        Возвращает список кортежей (entry_id, chat_id, content) для всех успешно удаленных записей.
+        """
+        if not entry_ids:
+            return []
+        deleted = []
+        affected_chats = set()
         try:
             with self._get_conn() as conn:
-                if chat_id is not None:
-                    cur = conn.execute("SELECT chat_id, content FROM chat_lore_entries WHERE id = ? AND chat_id = ?", (entry_id, chat_id))
-                else:
-                    cur = conn.execute("SELECT chat_id, content FROM chat_lore_entries WHERE id = ?", (entry_id,))
-                row = cur.fetchone()
-                if not row:
-                    return None
-                c_id = row["chat_id"]
-                content = row["content"]
-                conn.execute("DELETE FROM chat_lore_entries WHERE id = ?", (entry_id,))
-                self._sync_chat_lore_column(conn, c_id)
-                return c_id, content
+                for eid in entry_ids:
+                    if chat_id is not None:
+                        cur = conn.execute("SELECT chat_id, content FROM chat_lore_entries WHERE id = ? AND chat_id = ?", (eid, chat_id))
+                    else:
+                        cur = conn.execute("SELECT chat_id, content FROM chat_lore_entries WHERE id = ?", (eid,))
+                    row = cur.fetchone()
+                    if row:
+                        c_id = row["chat_id"]
+                        content = row["content"]
+                        conn.execute("DELETE FROM chat_lore_entries WHERE id = ?", (eid,))
+                        deleted.append((eid, c_id, content))
+                        affected_chats.add(c_id)
+                for c_id in affected_chats:
+                    self._sync_chat_lore_column(conn, c_id)
         except Exception as e:
-            logging.error(f"Ошибка удаления факта лора #{entry_id}: {e}")
-            return None
+            logging.error(f"Ошибка массового удаления записей лора {entry_ids}: {e}")
+        return deleted
 
     def set_chat_lore(self, chat_id: int, title: str, chat_lore: str):
         """Задает или обновляет лор/факты конфы целиком (перезапись)."""
@@ -940,23 +957,39 @@ class ChatMemory:
 
     def delete_kent_fact_entry(self, entry_id: int, user_id: Optional[int] = None) -> Optional[Tuple[int, str]]:
         """Удаляет отдельный факт о кенте по ID. Возвращает (user_id, content) при успехе."""
+        res = self.delete_kent_fact_entries([entry_id], user_id)
+        if res:
+            return res[0][1], res[0][2]
+        return None
+
+    def delete_kent_fact_entries(self, entry_ids: List[int], user_id: Optional[int] = None) -> List[Tuple[int, int, str]]:
+        """
+        Удаляет пачку фактов о кентах по списку ID.
+        Возвращает список кортежей (entry_id, user_id, content) для всех успешно удаленных записей.
+        """
+        if not entry_ids:
+            return []
+        deleted = []
+        affected_users = set()
         try:
             with self._get_conn() as conn:
-                if user_id is not None:
-                    cur = conn.execute("SELECT user_id, content FROM kent_facts_entries WHERE id = ? AND user_id = ?", (entry_id, user_id))
-                else:
-                    cur = conn.execute("SELECT user_id, content FROM kent_facts_entries WHERE id = ?", (entry_id,))
-                row = cur.fetchone()
-                if not row:
-                    return None
-                u_id = row["user_id"]
-                content = row["content"]
-                conn.execute("DELETE FROM kent_facts_entries WHERE id = ?", (entry_id,))
-                self._sync_user_persona_notes_column(conn, u_id)
-                return u_id, content
+                for eid in entry_ids:
+                    if user_id is not None:
+                        cur = conn.execute("SELECT user_id, content FROM kent_facts_entries WHERE id = ? AND user_id = ?", (eid, user_id))
+                    else:
+                        cur = conn.execute("SELECT user_id, content FROM kent_facts_entries WHERE id = ?", (eid,))
+                    row = cur.fetchone()
+                    if row:
+                        u_id = row["user_id"]
+                        content = row["content"]
+                        conn.execute("DELETE FROM kent_facts_entries WHERE id = ?", (eid,))
+                        deleted.append((eid, u_id, content))
+                        affected_users.add(u_id)
+                for u_id in affected_users:
+                    self._sync_user_persona_notes_column(conn, u_id)
         except Exception as e:
-            logging.error(f"Ошибка удаления факта о кенте #{entry_id}: {e}")
-            return None
+            logging.error(f"Ошибка массового удаления фактов о кентах {entry_ids}: {e}")
+        return deleted
 
     def set_persona_notes(self, user_id: int, persona_notes: str, user_name: str = "", first_name: str = ""):
         """Задает или обновляет персональные заметки о кенте целиком (перезапись)."""
@@ -1175,7 +1208,7 @@ class ChatMemory:
         try:
             with self._get_conn() as conn:
                 cur = conn.execute("""
-                    SELECT fact_key, fact_text, mention_count, last_seen
+                    SELECT id, fact_key, fact_text, mention_count, last_seen
                     FROM auto_observed_facts
                     WHERE entity_type = ? AND entity_id = ?
                     ORDER BY mention_count DESC, last_seen DESC
@@ -1185,6 +1218,26 @@ class ChatMemory:
         except Exception as e:
             logging.error(f"Ошибка получения auto_facts: {e}")
             return []
+
+    def delete_auto_facts(self, fact_ids: List[int]) -> List[Tuple[int, str]]:
+        """
+        Удаляет авто-факты по списку ID из auto_observed_facts.
+        Возвращает список кортежей (fact_id, fact_text).
+        """
+        if not fact_ids:
+            return []
+        deleted = []
+        try:
+            with self._get_conn() as conn:
+                for fid in fact_ids:
+                    cur = conn.execute("SELECT id, fact_text FROM auto_observed_facts WHERE id = ?", (fid,))
+                    row = cur.fetchone()
+                    if row:
+                        conn.execute("DELETE FROM auto_observed_facts WHERE id = ?", (fid,))
+                        deleted.append((fid, row["fact_text"]))
+        except Exception as e:
+            logging.error(f"Ошибка удаления авто-фактов {fact_ids}: {e}")
+        return deleted
 
     def record_chat_phrase(self, chat_id: int, phrase: str) -> int:
         """Инкрементирует частоту употребления фразы в чате."""
@@ -2333,8 +2386,8 @@ async def query_llm(messages: List[Dict[str, str]], is_detailed_request: bool = 
         predict_tokens = 2400
         temp = 0.70
     else:
-        # Для вариативного бёрста (2-5 коротких строк) с запасом токенов на кириллицу (конфиг: 240)
-        predict_tokens = 240
+        # Для вариативного бёрста (2-5 коротких строк) с надежным запасом токенов на кириллицу (конфиг: 400)
+        predict_tokens = NUM_PREDICT_CHAT
         temp = 0.75
 
     payload = {
@@ -2900,7 +2953,7 @@ async def cmd_autofacts(message: types.Message):
     if user_facts:
         lines.append("<b>Про тебя:</b>")
         for f in user_facts:
-            lines.append(f"• {f['fact_text']} (упомянуто: {f['mention_count']})")
+            lines.append(f"• [#{f['id']}] {f['fact_text']} (упомянуто: {f['mention_count']})")
     else:
         lines.append("<i>Про тебя пока ничего конкретного не подмечено (железо, ОС, игры).</i>")
 
@@ -2908,7 +2961,7 @@ async def cmd_autofacts(message: types.Message):
     if chat_facts or top_phrases:
         lines.append("<b>По конфе / чату:</b>")
         for f in chat_facts:
-            lines.append(f"• {f['fact_text']}")
+            lines.append(f"• [#{f['id']}] {f['fact_text']}")
         if top_phrases:
             lines.append("<b>Частые фразы конфы:</b>")
             for p in top_phrases:
@@ -2916,7 +2969,39 @@ async def cmd_autofacts(message: types.Message):
     else:
         lines.append("<i>По этой конфе частых повторяющихся тем пока не накопилось.</i>")
 
+    lines.append("\n<i>Удалить авто-факты: <code>/delfact &lt;ID 1&gt; [ID 2] ...</code></i>")
     await message.reply("\n".join(lines), parse_mode="HTML")
+
+
+@dp.message(Command("delfact", "delfacts", "удалифакт", "удалитьфакт", "минусфакт", "delautofact", "delautofacts"))
+async def cmd_delfact(message: types.Message):
+    """Удаляет авто-подмеченные факты по ID (одному или через пробел): /delfact <ID 1> <ID 2> ..."""
+    caller_id = message.from_user.id if message.from_user else 0
+    is_admin = await check_is_admin(message.chat, caller_id)
+    if not is_admin:
+        await message.reply("слышь, удалять авто-факты могут только админы конфы или бота!\nруки убрал")
+        return
+
+    raw_args = message.text.partition(" ")[2].strip() if message.text else ""
+    fact_ids = [int(x) for x in re.findall(r"\b\d+\b", raw_args)]
+    if not fact_ids:
+        await message.reply(
+            "Укажи один или несколько ID авто-фактов через пробел!\n"
+            "Пример: <code>/delfact 109 110 111</code>\n"
+            "(номера фактов можно глянуть через <code>/facts</code>)",
+            parse_mode="HTML"
+        )
+        return
+
+    deleted = await asyncio.to_thread(memory.delete_auto_facts, fact_ids)
+    if deleted:
+        out_lines = [f"Снес {len(deleted)} авто-факт(ов):"]
+        for fid, ftext in deleted:
+            snippet = ftext[:80] + ("..." if len(ftext) > 80 else "")
+            out_lines.append(f"• <b>[#{fid}]</b> <i>{html.escape(snippet)}</i>")
+        await message.reply("\n".join(out_lines), parse_mode="HTML")
+    else:
+        await message.reply("Ни один из указанных ID авто-фактов не найден в базе.\nГлянь актуальные ID через /facts")
 
 
 @dp.message(Command("setkent", "kent", "кент", "сеткент", "запомникента", "кореш", "досьекента"))
@@ -2944,25 +3029,26 @@ async def cmd_setkent(message: types.Message):
         await message.reply(help_msg, parse_mode="HTML")
         return
 
-    # Проверка на удаление факта через /setkent @user del <ID>
-    del_match = re.match(r"^(?:del|rm|delete|удали|удалить|-)\s+(\d+)$", notes.strip(), re.IGNORECASE) if notes else None
+    # Проверка на удаление факта через /setkent @user del <ID 1> [ID 2] ...
+    del_match = re.match(r"^(?:del|rm|delete|удали|удалить|-)\s+([\d\s]+)$", notes.strip(), re.IGNORECASE) if notes else None
     if del_match:
-        entry_id = int(del_match.group(1))
+        entry_ids = [int(x) for x in re.findall(r"\b\d+\b", del_match.group(1))]
+        if not entry_ids:
+            await message.reply("Укажи хотя бы один ID для удаления!")
+            return
         is_admin = await check_is_admin(message.chat, caller_id)
         if not is_admin:
             await message.reply("слышь, удалять факты из досье кента могут только админы конфы или бота!\nруки убрал")
             return
-        res = await asyncio.to_thread(memory.delete_kent_fact_entry, entry_id, target_id)
-        if res:
-            u_id, deleted_content = res
-            snippet = deleted_content[:100] + ("..." if len(deleted_content) > 100 else "")
-            await message.reply(
-                f"Удалил факт <b>[#{entry_id}]</b> из досье кента <b>{html.escape(str(target_name))}</b>:\n"
-                f"<i>{html.escape(snippet)}</i>",
-                parse_mode="HTML"
-            )
+        deleted = await asyncio.to_thread(memory.delete_kent_fact_entries, entry_ids, target_id)
+        if deleted:
+            out_lines = [f"Удалил {len(deleted)} факт(ов) из досье кента <b>{html.escape(str(target_name))}</b>:"]
+            for eid, _, content in deleted:
+                snippet = content[:80] + ("..." if len(content) > 80 else "")
+                out_lines.append(f"• <b>[#{eid}]</b> <i>{html.escape(snippet)}</i>")
+            await message.reply("\n".join(out_lines), parse_mode="HTML")
         else:
-            await message.reply(f"Факт с ID #{entry_id} не найден у кента {target_name}.\n/setkent @{target_name} напиши чтоб глянуть все факты с номерами")
+            await message.reply(f"Указанные ID фактов не найдены у кента {target_name}.\n/setkent @{target_name} напиши чтоб глянуть все факты с номерами")
         return
 
     # Если заметок нет — режим просмотра
@@ -3013,9 +3099,9 @@ async def cmd_setkent(message: types.Message):
     )
 
 
-@dp.message(Command("delkent", "delkentfact", "удалитькента", "удалифакт", "минусфакт", "delkentnote"))
+@dp.message(Command("delkent", "delkentfact", "удалитькента", "delkentnote"))
 async def cmd_delkent(message: types.Message):
-    """Удаляет отдельный факт о кенте по ID: /delkent <ID> или /delkent @username <ID>"""
+    """Удаляет факт(ы) о кенте по ID (одному или через пробел): /delkent <ID 1> <ID 2>... или /delkent @username <ID 1> <ID 2>..."""
     caller_id = message.from_user.id if message.from_user else 0
     is_admin = await check_is_admin(message.chat, caller_id)
     if not is_admin:
@@ -3025,35 +3111,29 @@ async def cmd_delkent(message: types.Message):
     raw_args = message.text.partition(" ")[2].strip() if message.text else ""
     target_id, target_name, remaining, _ = await resolve_target_user(message, raw_args)
 
-    entry_id = None
-    if remaining and remaining.isdigit():
-        entry_id = int(remaining)
-    elif raw_args and raw_args.isdigit():
-        entry_id = int(raw_args)
-        target_id = None
+    id_source = remaining if target_id is not None else raw_args
+    entry_ids = [int(x) for x in re.findall(r"\b\d+\b", id_source)]
 
-    if entry_id is None:
+    if not entry_ids:
         await message.reply(
-            "Укажи ID факта кента для удаления!\n"
-            "Пример: <code>/delkent 5</code> или <code>/delkent @username 5</code>\n"
+            "Укажи один или несколько ID фактов кента для удаления через пробел!\n"
+            "Пример: <code>/delkent 5</code> или <code>/delkent 5 6 7</code> или <code>/delkent @username 5 6 7</code>\n"
             "(список фактов с номерами: <code>/setkent @username</code>)",
             parse_mode="HTML"
         )
         return
 
-    res = await asyncio.to_thread(memory.delete_kent_fact_entry, entry_id, target_id)
-    if res:
-        u_id, deleted_content = res
-        prof = await asyncio.to_thread(memory.get_user_profile, u_id)
-        u_name = prof["user_name"] if prof and prof["user_name"] else f"ID {u_id}"
-        snippet = deleted_content[:100] + ("..." if len(deleted_content) > 100 else "")
-        await message.reply(
-            f"Снес факт <b>[#{entry_id}]</b> из досье кента <b>@{u_name}</b>:\n"
-            f"<i>{html.escape(snippet)}</i>",
-            parse_mode="HTML"
-        )
+    deleted = await asyncio.to_thread(memory.delete_kent_fact_entries, entry_ids, target_id)
+    if deleted:
+        out_lines = [f"Снес {len(deleted)} факт(ов) из базы кентов:"]
+        for eid, uid, content in deleted:
+            prof = await asyncio.to_thread(memory.get_user_profile, uid)
+            u_name = prof["user_name"] if prof and prof["user_name"] else f"ID {uid}"
+            snippet = content[:80] + ("..." if len(content) > 80 else "")
+            out_lines.append(f"• <b>[#{eid}]</b> (@{u_name}): <i>{html.escape(snippet)}</i>")
+        await message.reply("\n".join(out_lines), parse_mode="HTML")
     else:
-        await message.reply(f"Факт с ID #{entry_id} не найден в базе кентов.\n/setkent @user напиши чтоб глянуть номера фактов")
+        await message.reply(f"Ни один из указанных ID ({entry_ids}) не найден в базе кентов.\n/setkent @user напиши чтоб глянуть номера фактов")
 
 
 @dp.message(Command("restorekents", "resetkents", "восстановитькентов", "вернутькентов", "сброскентов"))
@@ -3266,26 +3346,27 @@ async def cmd_setchat(message: types.Message):
             )
         return
 
-    # Проверка на удаление факта через /setchat del <ID>
-    del_match = re.match(r"^(?:del|rm|delete|удали|удалить|-)\s+(\d+)$", new_lore, re.IGNORECASE)
+    # Проверка на удаление факта через /setchat del <ID 1> [ID 2] ...
+    del_match = re.match(r"^(?:del|rm|delete|удали|удалить|-)\s+([\d\s]+)$", new_lore.strip(), re.IGNORECASE) if new_lore else None
     if del_match:
-        entry_id = int(del_match.group(1))
+        entry_ids = [int(x) for x in re.findall(r"\b\d+\b", del_match.group(1))]
+        if not entry_ids:
+            await message.reply("Укажи хотя бы один ID для удаления!")
+            return
         is_admin = await check_is_admin(message.chat, caller_id)
         if not is_admin:
             await message.reply("слышь, удалять факты из лора конфы могут только админы чата или создатель!\nруки убрал")
             return
-        res = await asyncio.to_thread(memory.delete_chat_lore_entry, entry_id, target_chat_id)
-        if res:
-            c_id, deleted_content = res
-            snippet = deleted_content[:100] + ("..." if len(deleted_content) > 100 else "")
-            await message.reply(
-                f"Удалил запись <b>[#{entry_id}]</b> из лора конфы «{html.escape(target_chat_title)}»:\n"
-                f"<i>{html.escape(snippet)}</i>",
-                parse_mode="HTML"
-            )
+        deleted = await asyncio.to_thread(memory.delete_chat_lore_entries, entry_ids, target_chat_id)
+        if deleted:
+            out_lines = [f"Удалил {len(deleted)} запись(ей) из лора конфы «{html.escape(target_chat_title)}» ({target_chat_id}):"]
+            for eid, _, content in deleted:
+                snippet = content[:80] + ("..." if len(content) > 80 else "")
+                out_lines.append(f"• <b>[#{eid}]</b> <i>{html.escape(snippet)}</i>")
+            await message.reply("\n".join(out_lines), parse_mode="HTML")
         else:
             await message.reply(
-                f"Запись с ID #{entry_id} не найдена в лоре этой конфы.\n"
+                f"Указанные ID записей не найдены в лоре этой конфы.\n"
                 f"Напиши <code>/setchat</code> чтобы глянуть список фактов с номерами.",
                 parse_mode="HTML"
             )
@@ -3310,7 +3391,7 @@ async def cmd_setchat(message: types.Message):
 
 @dp.message(Command("delchat", "delchatlore", "delconflore", "удаличат", "удалитьлор", "минуслор", "удалилор"))
 async def cmd_delchat(message: types.Message):
-    """Удаляет отдельный факт из лора конфы по ID: /delchat <ID> или /delchat <chat_id> <ID>"""
+    """Удаляет отдельный факт или пачку фактов из лора конфы по ID: /delchat <ID 1> <ID 2> ..."""
     caller_id = message.from_user.id if message.from_user else 0
     is_admin = await check_is_admin(message.chat, caller_id)
     if not is_admin:
@@ -3321,36 +3402,32 @@ async def cmd_delchat(message: types.Message):
     target_chat_id = message.chat.id
     target_chat_title = message.chat.title or "Текущий чат"
 
-    entry_id = None
-    if raw_args:
-        parts = raw_args.split()
-        if len(parts) >= 2 and parts[0].startswith("-100") and parts[0][1:].isdigit() and parts[1].isdigit():
-            target_chat_id = int(parts[0])
-            entry_id = int(parts[1])
-        elif parts[0].isdigit():
-            entry_id = int(parts[0])
+    parts = raw_args.split()
+    if parts and parts[0].startswith("-100") and parts[0][1:].isdigit():
+        target_chat_id = int(parts[0])
+        entry_ids = [int(x) for x in parts[1:] if x.isdigit()]
+    else:
+        entry_ids = [int(x) for x in parts if x.isdigit()]
 
-    if entry_id is None:
+    if not entry_ids:
         await message.reply(
-            "Укажи ID факта конфы для удаления!\n"
-            "Пример: <code>/delchat 3</code>\n"
+            "Укажи один или несколько ID записей лора конфы для удаления через пробел!\n"
+            "Пример: <code>/delchat 3</code> или <code>/delchat 3 4 5</code> или <code>/delchat -1001626651838 3 4 5</code>\n"
             "(список всех записей с номерами: <code>/setchat</code>)",
             parse_mode="HTML"
         )
         return
 
-    res = await asyncio.to_thread(memory.delete_chat_lore_entry, entry_id, target_chat_id)
-    if res:
-        c_id, deleted_content = res
-        snippet = deleted_content[:100] + ("..." if len(deleted_content) > 100 else "")
-        await message.reply(
-            f"Снес запись <b>[#{entry_id}]</b> из лора конфы (<code>{target_chat_id}</code>):\n"
-            f"<i>{html.escape(snippet)}</i>",
-            parse_mode="HTML"
-        )
+    deleted = await asyncio.to_thread(memory.delete_chat_lore_entries, entry_ids, target_chat_id)
+    if deleted:
+        out_lines = [f"Снес {len(deleted)} запись(ей) из лора конфы (<code>{target_chat_id}</code>):"]
+        for eid, _, content in deleted:
+            snippet = content[:80] + ("..." if len(content) > 80 else "")
+            out_lines.append(f"• <b>[#{eid}]</b> <i>{html.escape(snippet)}</i>")
+        await message.reply("\n".join(out_lines), parse_mode="HTML")
     else:
         await message.reply(
-            f"Запись с ID #{entry_id} не найдена в лоре конфы.\n"
+            f"Ни одна из записей с ID {entry_ids} не найдена в лоре конфы.\n"
             f"Напиши <code>/setchat</code> чтоб глянуть список фактов и их ID",
             parse_mode="HTML"
         )
