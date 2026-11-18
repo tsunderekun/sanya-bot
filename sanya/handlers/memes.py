@@ -39,7 +39,7 @@ async def collect_channel_post(message: types.Message, db: Database):
         or message.has_media_spoiler
     ):
         return
-    if not message.chat.username and message.chat.id not in MEME_DONOR_CHANNEL_IDS:
+    if MEME_DONOR_CHANNEL_IDS and message.chat.id not in MEME_DONOR_CHANNEL_IDS:
         return
     for kind, media in (
         ("animation", message.animation),
@@ -54,6 +54,12 @@ async def collect_channel_post(message: types.Message, db: Database):
                 kind,
                 media.file_id,
                 media.file_unique_id,
+            )
+            logger.info(
+                "Captured %s meme from channel %s (message %s)",
+                kind,
+                message.chat.id,
+                message.message_id,
             )
             return
 
