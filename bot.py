@@ -37,7 +37,7 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://localhost:11434")
 MODEL_NAME = os.getenv("MODEL_NAME", "sanya")
 VISION_MODEL_NAME = os.getenv("VISION_MODEL_NAME", "moondream")
 MAX_HISTORY = int(os.getenv("MAX_HISTORY_LENGTH", "100"))
-MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "24000"))
+MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "14000"))
 MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "20"))
 USER_COOLDOWN_SECONDS = float(os.getenv("USER_COOLDOWN_SECONDS", "5.0"))
 MAX_PROACTIVE_PER_HOUR = int(os.getenv("MAX_PROACTIVE_PER_HOUR", "3"))
@@ -2469,7 +2469,7 @@ async def query_llm(messages: List[Dict[str, str]], is_detailed_request: bool = 
             "repeat_penalty": 1.20,
             "repeat_last_n": 160,
             "num_predict": predict_tokens,
-            "num_ctx": 8192
+            "num_ctx": 16384
         }
     }
 
@@ -2483,6 +2483,10 @@ async def query_llm(messages: List[Dict[str, str]], is_detailed_request: bool = 
                 thinking = (msg.get("thinking") or "").strip()
                 content = (msg.get("content") or "").strip()
                 content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).replace("</think>", "").replace("<think>", "").strip()
+                done_reason = data.get("done_reason")
+                eval_count = data.get("eval_count", 0)
+                prompt_eval_count = data.get("prompt_eval_count", 0)
+                logging.info(f"[{MODEL_NAME} Gen]: eval={eval_count}, prompt_eval={prompt_eval_count}, done={done_reason}")
 
                 if thinking:
                     first_line = thinking.split('\n')[0][:120]
@@ -2495,11 +2499,14 @@ async def query_llm(messages: List[Dict[str, str]], is_detailed_request: bool = 
                     fallback_payload["think"] = False
                     fallback_payload["options"] = dict(payload["options"])
                     fallback_payload["options"]["num_predict"] = NUM_PREDICT_CHAT
+                    fallback_payload["options"]["num_ctx"] = 16384
                     fb_resp = await client.post(endpoint, json=fallback_payload)
                     if fb_resp.status_code == 200:
-                        fb_msg = fb_resp.json().get("message", {})
+                        fb_data = fb_resp.json()
+                        fb_msg = fb_data.get("message", {})
                         content = (fb_msg.get("content") or "").strip()
                         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).replace("</think>", "").replace("<think>", "").strip()
+                        logging.info(f"[{MODEL_NAME} Fallback Gen]: eval={fb_data.get('eval_count')}, done={fb_data.get('done_reason')}")
 
                 if not content:
                     return "Че кезднуть\nИли че"
