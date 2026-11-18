@@ -38,6 +38,17 @@ def initialize(conn):
         "CREATE INDEX IF NOT EXISTS idx_booru_recent ON booru_history(chat_id, id DESC)"
     )
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS meme_history (
+            id INTEGER PRIMARY KEY,
+            chat_id INTEGER NOT NULL,
+            meme_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_meme_history_chat ON meme_history(chat_id, meme_id)"
+    )
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER NOT NULL,

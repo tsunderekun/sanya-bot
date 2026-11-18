@@ -103,6 +103,9 @@ async def register_commands(bot: Bot):
                 BotCommand(command="help", description="Все команды и гайд по лору"),
                 BotCommand(command="pic", description="Найти картинку"),
                 BotCommand(command="meme", description="Случайный канальный мем"),
+                BotCommand(
+                    command="precache", description="Загрузить мемы из канала в базу"
+                ),
                 BotCommand(command="hardware", description="Показать конфиг железа"),
                 BotCommand(
                     command="price", description="Прикинуть цену железки по Авито"

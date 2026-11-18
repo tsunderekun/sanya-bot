@@ -23,17 +23,64 @@ class Repository:
         self, channel_id, message_id, media_type, file_id, file_unique_id
     ):
         with self.connection as conn:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO channel_memes (channel_id, message_id, media_type, file_id, file_unique_id) "
                 "VALUES (?, ?, ?, ?, ?) ON CONFLICT(channel_id, message_id) DO NOTHING",
                 (channel_id, message_id, media_type, file_id, file_unique_id),
             )
+            return cur.rowcount > 0
 
     def random_channel_memes(self, limit=3):
         return self.connection.execute(
-            "SELECT media_type, file_id FROM channel_memes ORDER BY RANDOM() LIMIT ?",
+            "SELECT id, media_type, file_id FROM channel_memes ORDER BY RANDOM() LIMIT ?",
             (limit,),
         ).fetchall()
+
+    def get_channel_memes_with_penalty(self, chat_id, limit=5):
+        return self.connection.execute(
+            """
+            SELECT cm.id, cm.media_type, cm.file_id,
+                   COUNT(mh.id) AS show_count,
+                   COALESCE(MAX(mh.id), 0) AS last_shown_id
+            FROM channel_memes cm
+            LEFT JOIN meme_history mh ON mh.meme_id = cm.id AND mh.chat_id = ?
+            GROUP BY cm.id
+            ORDER BY show_count ASC, last_shown_id ASC, RANDOM()
+            LIMIT ?
+            """,
+            (chat_id, limit),
+        ).fetchall()
+
+    def record_meme_history(self, chat_id, meme_id):
+        with self.connection as conn:
+            conn.execute(
+                "INSERT INTO meme_history (chat_id, meme_id) VALUES (?, ?)",
+                (chat_id, meme_id),
+            )
+            conn.execute(
+                "DELETE FROM meme_history WHERE id IN ("
+                "  SELECT id FROM meme_history WHERE chat_id = ? "
+                "  ORDER BY id DESC LIMIT -1 OFFSET 500"
+                ")",
+                (chat_id,),
+            )
+
+    def update_channel_meme_file_id(self, meme_id, file_id, file_unique_id):
+        with self.connection as conn:
+            conn.execute(
+                "UPDATE channel_memes SET file_id = ?, file_unique_id = ? WHERE id = ?",
+                (file_id, file_unique_id, meme_id),
+            )
+
+    def count_channel_memes(self, channel_id=None):
+        if channel_id is not None:
+            row = self.connection.execute(
+                "SELECT count(*) FROM channel_memes WHERE channel_id = ?",
+                (channel_id,),
+            ).fetchone()
+        else:
+            row = self.connection.execute("SELECT count(*) FROM channel_memes").fetchone()
+        return row[0] if row else 0
 
     def recent_booru_ids(self, chat_id):
         return {

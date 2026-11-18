@@ -243,3 +243,31 @@ class FeatureUnitTests(unittest.TestCase):
             self.assertEqual(len(repo.recent_booru_ids(-100)), 200)
             self.assertNotIn("Derpibooru:0", repo.recent_booru_ids(-100))
             self.assertEqual(repo.recent_booru_ids(-101), {"Derpibooru:0"})
+
+    def test_meme_repetition_penalty_and_history(self):
+        with closing(sqlite3.connect(":memory:")) as conn:
+            conn.row_factory = sqlite3.Row
+            initialize(conn)
+            repo = Repository(conn)
+            repo.save_channel_meme(-100, 101, "photo", "file_a", "u_a")
+            repo.save_channel_meme(-100, 102, "video", "file_b", "u_b")
+            repo.save_channel_meme(-100, 103, "animation", "file_c", "u_c")
+
+            all_memes = repo.random_channel_memes(limit=10)
+            id_a = next(m["id"] for m in all_memes if m["file_id"] == "file_a")
+            id_b = next(m["id"] for m in all_memes if m["file_id"] == "file_b")
+            id_c = next(m["id"] for m in all_memes if m["file_id"] == "file_c")
+
+            # Show A and B in chat 50
+            repo.record_meme_history(50, id_a)
+            repo.record_meme_history(50, id_b)
+
+            # C has never been shown in chat 50, so C must be first candidate
+            candidates = repo.get_channel_memes_with_penalty(50, limit=1)
+            self.assertEqual(candidates[0]["id"], id_c)
+
+            # Show A a second time -> A has show_count=2, B has show_count=1, C has show_count=0
+            repo.record_meme_history(50, id_a)
+            candidates_all = repo.get_channel_memes_with_penalty(50, limit=3)
+            # A should be last (highest penalty)
+            self.assertEqual(candidates_all[-1]["id"], id_a)
