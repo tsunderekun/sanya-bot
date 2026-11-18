@@ -12,7 +12,13 @@ from aiogram import Router, types
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command
 
-from ..config import MEME_DONOR_CHANNEL_IDS, SLOIPER_CHANCE, SLOIPER_DIR
+from ..config import (
+    MEME_DONOR_CHANNEL_IDS,
+    SEARCH_PROXY,
+    SLOIPER_CHANCE,
+    SLOIPER_DIR,
+    TELEGRAM_PROXY,
+)
 from ..database import Database
 from ..repository import Repository
 
@@ -83,7 +89,8 @@ def preview_media(page: str) -> list[tuple[str, str]]:
 
 async def public_memes() -> list[tuple[str, str]]:
     try:
-        async with httpx.AsyncClient(timeout=4, follow_redirects=False) as client:
+        proxy = TELEGRAM_PROXY or SEARCH_PROXY or None
+        async with httpx.AsyncClient(proxy=proxy, timeout=6, follow_redirects=False) as client:
             response = await client.get("https://t.me/s/mestodm")
             response.raise_for_status()
         return preview_media(response.text)
