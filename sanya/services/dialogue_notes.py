@@ -4,7 +4,7 @@ import re
 from aiogram.types import Message
 
 from ..database import Database
-from ..lore import KENTS_NAME_ALIASES
+from ..lore import KENT_ALIASES
 
 KENTS_QUESTION = re.compile(
     r"\b(?:саммари|поясни|расскажи|че там|кто такие)\b.*?\b(?:кент|пацан|банд|кореш)\w*",
@@ -14,7 +14,7 @@ PERSON_QUESTION = re.compile(
     r"\b(?:кто|поясни|че за|расскажи|знаешь|че думаешь|как тебе|что скажешь|мнение|база)\b",
     re.I,
 )
-ALIASES = {alias: uid for uid, names in KENTS_NAME_ALIASES.items() for alias in names}
+ALIASES = {alias: uid for uid, names in KENT_ALIASES.items() for alias in names}
 ALIAS_PATTERN = re.compile(
     r"(?<!\w)(?:"
     + "|".join(map(re.escape, sorted(ALIASES, key=len, reverse=True)))
@@ -61,10 +61,17 @@ def _collect(repo, uid, chat_id, replied, text, include_kents):
     chat = repo.get_chat_profile(chat_id)
     if chat and chat["chat_lore"]:
         notes.append(f"Лор конфы {chat['title']}: {chat['chat_lore'][:400]}")
-    for kind, key in (("user", uid), ("chat", chat_id)):
-        facts = repo.get_auto_facts(kind, key, 3)
-        if facts:
-            notes.append("Подмечено: " + "; ".join(f["fact_text"][:100] for f in facts))
+    self_facts = repo.get_self_facts(chat_id, uid, 3)
+    if self_facts:
+        notes.append(
+            "Со слов собеседника в этом чате (при расхождении верь ручному лору): "
+            + "; ".join(f["fact_text"][:100] for f in self_facts)
+        )
+    chat_facts = repo.get_auto_facts("chat", chat_id, 3)
+    if chat_facts:
+        notes.append(
+            "Подмечено в чате: " + "; ".join(f["fact_text"][:100] for f in chat_facts)
+        )
     phrases = repo.get_top_chat_phrases(chat_id, 3)
     if phrases:
         notes.append("Частые темы: " + ", ".join(p["phrase"][:60] for p in phrases))

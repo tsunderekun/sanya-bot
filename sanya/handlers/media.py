@@ -5,40 +5,46 @@ from aiogram.filters import Command
 
 from ..services.queue import RequestQueue
 from ..services.stickers import try_react_whale
+from .command_args import command_args
+
+
+async def enqueue_command(message: types.Message, requests: RequestQueue, **kwargs):
+    if not await requests.enqueue(message, **kwargs):
+        await message.reply("Сейчас не могу принять запрос. Попробуй чуть позже.")
 
 
 async def cmd_search(message: types.Message, requests: RequestQueue):
     await try_react_whale(message)
-    args = message.text.partition(" ")[2].strip()
+    args = command_args(message)
     if not args:
         await message.reply("Напиши че искать то\n/s 4070 авито или /поиск 4070 авито")
         return
-    await requests.enqueue(message, force_search_query=args)
+    await enqueue_command(message, requests, force_search_query=args)
 
 
 async def cmd_pic(message: types.Message, requests: RequestQueue):
     await try_react_whale(message)
-    args = message.text.partition(" ")[2].strip()
+    args = command_args(message)
     if not args:
         await message.reply(
             "Напиши че за картинку искать то\n/pic микротик или /пикча микротик"
         )
         return
     if re.search(r"\b(booru|буру|r34|р34|derpi|дерпи|rule34)\b", args, re.IGNORECASE):
-        await requests.enqueue(message, force_booru_query=args)
+        await enqueue_command(message, requests, force_booru_query=args)
     else:
-        await requests.enqueue(message, force_image_query=args)
+        await enqueue_command(message, requests, force_image_query=args)
 
 
 async def cmd_booru(message: types.Message, requests: RequestQueue):
     await try_react_whale(message)
-    args = message.text.partition(" ")[2].strip()
+    args = command_args(message)
     if not args:
         await message.reply(
             "Напиши че искать на буру/р34:\n/booru fluttershy или /р34 hatsune miku"
         )
         return
-    await requests.enqueue(message, force_booru_query=args)
+    await enqueue_command(message, requests, force_booru_query=args)
 
 
 def make_router() -> Router:

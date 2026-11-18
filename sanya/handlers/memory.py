@@ -14,6 +14,7 @@ from ..repository import Repository
 from ..services.render import Mode, clean_response
 from ..services.telegram import keep_typing, send_burst_messages
 from .access import check_is_admin, resolve_target_user
+from .command_args import command_args, reply_html_lines
 
 
 def parse_positive_ids(text: str) -> list[int]:
@@ -28,17 +29,29 @@ def parse_positive_ids(text: str) -> list[int]:
 
 async def cmd_forgetme(message: types.Message, db: Database):
     caller_id = message.from_user.id if message.from_user else 0
-    is_admin = await check_is_admin(message.chat, caller_id)
+    if not caller_id:
+        return
+    is_admin = await check_is_admin(None, caller_id)
 
-    raw_args = message.text.partition(" ")[2].strip() if message.text else ""
+    raw_args = command_args(message)
     target_id = caller_id
     target_name = message.from_user.username or message.from_user.first_name or "кореш"
 
-    # Админ может вызвать /forgetme в ответ на сообщение кента, с @username или с ID
+    # Только админ бота может указать другого пользователя: операция затрагивает всю БД.
+    if raw_args and not is_admin:
+        await message.reply(
+            "Чужие данные может удалять только админ бота. Для своих напиши /forgetme без аргументов."
+        )
+        return
     if is_admin and (raw_args or message.reply_to_message):
-        res_id, res_name, _, err = await resolve_target_user(db, message, raw_args)
+        res_id, res_name, remaining, err = await resolve_target_user(
+            db, message, raw_args
+        )
         if err:
             await message.reply(err)
+            return
+        if raw_args and (not res_id or remaining):
+            await message.reply("Укажи только @username или числовой ID")
             return
         if res_id:
             target_id = res_id
@@ -111,27 +124,27 @@ async def cmd_forgetme(message: types.Message, db: Database):
 
 
 async def cb_forgetme(query: CallbackQuery, db: Database):
-    try:
-        parts = query.data.split(":")
-        if len(parts) != 4:
-            await query.answer("Кривой запрос", show_alert=True)
-            return
-        _, action, target_id_str, caller_id_str = parts
-        target_id = int(target_id_str)
-        caller_id = int(caller_id_str)
-    except Exception as e:
-        logging.error(f"Ошибка парсинга callback forget: {e}")
+    match = re.fullmatch(
+        r"forget:(cancel|msgs|all):([0-9]{1,19}):([0-9]{1,19})", query.data or ""
+    )
+    if (
+        not isinstance(query.message, types.Message)
+        or not match
+        or not parse_positive_ids(f"{match[2]} {match[3]}")
+    ):
         await query.answer("Ошибка запроса", show_alert=True)
         return
-
+    action, target_id_str, caller_id_str = match.groups()
+    target_id, caller_id = int(target_id_str), int(caller_id_str)
     clicker_id = query.from_user.id
-    clicker_is_admin = await check_is_admin(
-        query.message.chat if query.message else None, clicker_id
-    )
-
-    # Защита от чужих кликов в общем чате: нажимать может либо автор команды, либо админ
-    if clicker_id != caller_id and not clicker_is_admin:
+    if clicker_id != caller_id:
         await query.answer("слышь, не твоя кнопка, руки убрал!", show_alert=True)
+        return
+
+    if (action == "all" or target_id != caller_id) and not await check_is_admin(
+        None, clicker_id
+    ):
+        await query.answer("Для этого нужны права админа бота", show_alert=True)
         return
 
     if action == "cancel":
@@ -142,16 +155,13 @@ async def cb_forgetme(query: CallbackQuery, db: Database):
         return
 
     if action == "all":
-        # Полный снос разрешен СТРОГО админам
-        if not clicker_is_admin:
-            await query.answer(
-                "Хуй тебе, только админ может стирать всё под ноль!", show_alert=True
-            )
-            return
-
-        deleted_msgs, deleted_prof = await db.run(
+        result = await db.run(
             Repository.clear_user_data, target_id, delete_profile=True
         )
+        if result is None:
+            await query.answer("Не удалось очистить данные", show_alert=True)
+            return
+        deleted_msgs, deleted_prof = result
         logging.info(
             f"Админ {clicker_id} полностью снес пользователя {target_id}: msgs={deleted_msgs}, prof={deleted_prof}"
         )
@@ -165,9 +175,13 @@ async def cb_forgetme(query: CallbackQuery, db: Database):
         return
 
     if action == "msgs":
-        deleted_msgs, _ = await db.run(
+        result = await db.run(
             Repository.clear_user_data, target_id, delete_profile=False
         )
+        if result is None:
+            await query.answer("Не удалось очистить данные", show_alert=True)
+            return
+        deleted_msgs, _ = result
         logging.info(
             f"Очищены сообщения пользователя {target_id}: msgs={deleted_msgs} (инициатор: {clicker_id})"
         )
@@ -187,6 +201,8 @@ async def cb_forgetme(query: CallbackQuery, db: Database):
 
 
 async def cmd_mydata(message: types.Message, db: Database):
+    if not message.from_user:
+        return
     user_id = message.from_user.id
     prof = await db.run(Repository.get_user_profile, user_id)
     if not prof:
@@ -202,41 +218,49 @@ async def cmd_mydata(message: types.Message, db: Database):
         if "persona_notes" in prof.keys() and prof["persona_notes"]
         else ""
     )
-    notes_str = f"\nстатус кента: <i>{persona_notes}</i>" if persona_notes else ""
+    notes_str = (
+        f"\nстатус кента: <i>{html.escape(persona_notes[:2000])}</i>"
+        if persona_notes
+        else ""
+    )
 
-    user_auto_facts = await db.run(Repository.get_auto_facts, "user", user_id, 5)
+    user_auto_facts = await db.run(
+        Repository.get_self_facts, message.chat.id, user_id, 5
+    )
     auto_facts_str = ""
     if user_auto_facts:
         auto_facts_str = "\n\nавто-подмечено:\n" + "\n".join(
-            [f"• {f['fact_text']}" for f in user_auto_facts]
+            [f"• {html.escape(f['fact_text'][:160])}" for f in user_auto_facts]
         )
 
     reply_text = (
         f"че я про тебя помню в базе:\n"
-        f"id: <code>{user_id}</code> (@{uname})\n"
+        f"id: <code>{user_id}</code> (@{html.escape(uname)})\n"
         f"сообщений накропал: {msg_count}\n"
         f"первый раз вылез: {first_seen}\n"
         f"крайний раз: {last_seen}"
         f"{notes_str}"
         f"{auto_facts_str}\n\n"
-        f"хочешь всё снести к хуям — пиши /forgetme или /забудь"
+        "Удалить свои сообщения из базы: /forgetme или /забудь"
     )
     await message.reply(reply_text, parse_mode="HTML")
 
 
 async def cmd_autofacts(message: types.Message, db: Database):
+    if not message.from_user:
+        return
     user_id = message.from_user.id
     chat_id = message.chat.id
-    user_facts = await db.run(Repository.get_auto_facts, "user", user_id, 8)
+    user_facts = await db.run(Repository.get_self_facts, chat_id, user_id, 8)
     chat_facts = await db.run(Repository.get_auto_facts, "chat", chat_id, 8)
     top_phrases = await db.run(Repository.get_top_chat_phrases, chat_id, 8)
 
     lines = ["<b>Автоматически подмеченные факты Сани Пониёба:</b>\n"]
     if user_facts:
-        lines.append("<b>Про тебя:</b>")
+        lines.append("<b>С твоих слов в этом чате:</b>")
         for f in user_facts:
             lines.append(
-                f"• [#{f['id']}] {f['fact_text']} (упомянуто: {f['mention_count']})"
+                f"• [#{f['id']}] {html.escape(f['fact_text'][:140])} (упомянуто: {f['mention_count']})"
             )
     else:
         lines.append(
@@ -247,18 +271,20 @@ async def cmd_autofacts(message: types.Message, db: Database):
     if chat_facts or top_phrases:
         lines.append("<b>По конфе / чату:</b>")
         for f in chat_facts:
-            lines.append(f"• [#{f['id']}] {f['fact_text']}")
+            lines.append(f"• [#{f['id']}] {html.escape(f['fact_text'][:140])}")
         if top_phrases:
             lines.append("<b>Частые фразы конфы:</b>")
             for p in top_phrases:
-                lines.append(f"• «{p['phrase']}» (повторов: {p['frequency']})")
+                lines.append(
+                    f"• «{html.escape(p['phrase'][:100])}» (повторов: {p['frequency']})"
+                )
     else:
         lines.append(
             "<i>По этой конфе частых повторяющихся тем пока не накопилось.</i>"
         )
 
     lines.append(
-        "\n<i>Удалить авто-факты: <code>/delfact &lt;ID 1&gt; [ID 2] ...</code></i>"
+        "\n<i>Админ чата может удалить факты этого чата: <code>/delfact &lt;ID 1&gt; [ID 2] ...</code></i>"
     )
     await message.reply("\n".join(lines), parse_mode="HTML")
 
@@ -273,7 +299,7 @@ async def cmd_delfact(message: types.Message, db: Database):
         )
         return
 
-    raw_args = message.text.partition(" ")[2].strip() if message.text else ""
+    raw_args = command_args(message)
     fact_ids = parse_positive_ids(raw_args)
     if not fact_ids:
         await message.reply(
@@ -284,13 +310,18 @@ async def cmd_delfact(message: types.Message, db: Database):
         )
         return
 
-    deleted = await db.run(Repository.delete_auto_facts, fact_ids)
+    global_admin = await check_is_admin(None, caller_id)
+    deleted = await db.run(
+        Repository.delete_auto_facts,
+        fact_ids,
+        chat_id=None if global_admin else message.chat.id,
+    )
     if deleted:
         out_lines = [f"Снес {len(deleted)} авто-факт(ов):"]
         for fid, ftext in deleted:
             snippet = ftext[:80] + ("..." if len(ftext) > 80 else "")
             out_lines.append(f"• <b>[#{fid}]</b> <i>{html.escape(snippet)}</i>")
-        await message.reply("\n".join(out_lines), parse_mode="HTML")
+        await reply_html_lines(message, out_lines)
     else:
         await message.reply(
             "Ни один из указанных ID авто-фактов не найден в базе.\nГлянь актуальные ID через /facts"
@@ -299,9 +330,9 @@ async def cmd_delfact(message: types.Message, db: Database):
 
 async def cmd_setkent(message: types.Message, db: Database):
     """Команда для добавления/просмотра/удаления фактов о кенте: /setkent <@username / id / reply> [факт]"""
-    raw_args = message.text.partition(" ")[2].strip() if message.text else ""
+    raw_args = command_args(message)
     target_id, target_name, notes, err = await resolve_target_user(
-        db, message, raw_args
+        db, message, raw_args, allow_kent_aliases=True
     )
 
     if err:
@@ -334,7 +365,7 @@ async def cmd_setkent(message: types.Message, db: Database):
         else None
     )
     if del_match:
-        entry_ids = [int(x) for x in re.findall(r"\b\d+\b", del_match.group(1))]
+        entry_ids = parse_positive_ids(del_match.group(1))
         if not entry_ids:
             await message.reply("Укажи хотя бы один ID для удаления!")
             return
@@ -354,10 +385,10 @@ async def cmd_setkent(message: types.Message, db: Database):
             for eid, _, content in deleted:
                 snippet = content[:80] + ("..." if len(content) > 80 else "")
                 out_lines.append(f"• <b>[#{eid}]</b> <i>{html.escape(snippet)}</i>")
-            await message.reply("\n".join(out_lines), parse_mode="HTML")
+            await reply_html_lines(message, out_lines)
         else:
             await message.reply(
-                f"Указанные ID фактов не найдены у кента {target_name}.\n/setkent @{target_name} напиши чтоб глянуть все факты с номерами"
+                f"Указанные ID фактов не найдены у кента {target_name}.\n/setkent {target_id} напиши чтоб глянуть все факты с номерами"
             )
         return
 
@@ -373,15 +404,15 @@ async def cmd_setkent(message: types.Message, db: Database):
             for e in entries:
                 lines.append(f"<b>[#{e['id']}]</b> {html.escape(e['content'])}")
             lines.append(
-                f"\n➕ <i>Добавить факт:</i> <code>/setkent @{target_name} &lt;новый факт&gt;</code>"
+                f"\n➕ <i>Добавить факт:</i> <code>/setkent {target_id} &lt;новый факт&gt;</code>"
             )
             lines.append(
-                f"❌ <i>Удалить факт:</i> <code>/delkent &lt;ID&gt;</code> (или <code>/setkent @{target_name} del &lt;ID&gt;</code>)"
+                f"❌ <i>Удалить факт:</i> <code>/delkent &lt;ID&gt;</code> (или <code>/setkent {target_id} del &lt;ID&gt;</code>)"
             )
             lines.append(
-                f"💡 <i>Пояснить за кента:</i> <code>/ктотакой @{target_name}</code>"
+                f"💡 <i>Пояснить за кента:</i> <code>/ктотакой {target_id}</code>"
             )
-            await message.reply("\n".join(lines), parse_mode="HTML")
+            await reply_html_lines(message, lines)
         else:
             if is_initial_kent:
                 kb = InlineKeyboardMarkup(
@@ -403,7 +434,7 @@ async def cmd_setkent(message: types.Message, db: Database):
             else:
                 await message.reply(
                     f"Про кента <b>{html.escape(str(target_name))}</b> (<code>{target_id}</code>) заметок пока нет.\n"
-                    f"Добавить: <code>/setkent @{target_name} &lt;инфа&gt;</code>",
+                    f"Добавить: <code>/setkent {target_id} &lt;инфа&gt;</code>",
                     parse_mode="HTML",
                 )
         return
@@ -416,17 +447,25 @@ async def cmd_setkent(message: types.Message, db: Database):
         )
         return
 
+    reply = message.reply_to_message
+    author = reply.from_user if reply else None
+    if author and author.id != target_id:
+        author = None
     new_id = await db.run(
         Repository.add_kent_fact_entry,
         target_id,
         notes,
-        target_name,
+        user_name=(author.username or "") if author else "",
+        first_name=(author.first_name or "") if author else "",
         added_by=caller_id,
     )
+    if not new_id:
+        await message.reply("Не удалось сохранить факт о кенте")
+        return
     await message.reply(
         f"Добавил факт <b>[#{new_id}]</b> кенту <b>{html.escape(str(target_name))}</b> (<code>{target_id}</code>):\n\n"
-        f"<i>{html.escape(notes)}</i>\n\n"
-        f"💡 <i>Все факты кента:</i> <code>/setkent @{target_name}</code>\n"
+        f"<i>{html.escape(notes[:500])}</i>\n\n"
+        f"💡 <i>Все факты кента:</i> <code>/setkent {target_id}</code>\n"
         f"❌ <i>Удалить этот факт:</i> <code>/delkent {new_id}</code>",
         parse_mode="HTML",
     )
@@ -442,12 +481,12 @@ async def cmd_delkent(message: types.Message, db: Database):
         )
         return
 
-    raw_args = message.text.partition(" ")[2].strip() if message.text else ""
+    raw_args = command_args(message)
     target_id = None
     id_source = raw_args
     if raw_args.startswith("@"):
         target_id, _, id_source, error = await resolve_target_user(
-            db, message, raw_args
+            db, message, raw_args, allow_kent_aliases=True
         )
         if error or target_id is None:
             await message.reply(error or "Кента не нашел")
@@ -467,13 +506,11 @@ async def cmd_delkent(message: types.Message, db: Database):
     if deleted:
         out_lines = [f"Снес {len(deleted)} факт(ов) из базы кентов:"]
         for eid, uid, content in deleted:
-            prof = await db.run(Repository.get_user_profile, uid)
-            u_name = prof["user_name"] if prof and prof["user_name"] else f"ID {uid}"
             snippet = content[:80] + ("..." if len(content) > 80 else "")
             out_lines.append(
-                f"• <b>[#{eid}]</b> (@{u_name}): <i>{html.escape(snippet)}</i>"
+                f"• <b>[#{eid}]</b> (кент {uid}): <i>{html.escape(snippet)}</i>"
             )
-        await message.reply("\n".join(out_lines), parse_mode="HTML")
+        await reply_html_lines(message, out_lines)
     else:
         await message.reply(
             f"Ни один из указанных ID ({entry_ids}) не найден в базе кентов.\n/setkent @user напиши чтоб глянуть номера фактов"
@@ -494,7 +531,7 @@ async def cmd_restorekents(message: types.Message):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="♻️ Восстановить всех 8 кентов",
+                    text=f"Восстановить базовый лор ({len(INITIAL_KENTS_PROFILES)})",
                     callback_data=f"restore:all:{caller_id}",
                 )
             ],
@@ -507,8 +544,7 @@ async def cmd_restorekents(message: types.Message):
     )
     await message.reply(
         "<b>Восстановление базы кентов:</b>\n"
-        "Эта кнопка вернет исходный лор и статус для всех ключевых кентов конфы "
-        "(Витя-ПК, Жидкер, Таетер, Кунецка, Армор, Кобан, Рафаэль, Спермер).\n\n"
+        "Добавлю недостающие базовые заметки. Ручные факты останутся на месте.\n\n"
         "Восстанавливаем?",
         reply_markup=keyboard,
         parse_mode="HTML",
@@ -516,14 +552,16 @@ async def cmd_restorekents(message: types.Message):
 
 
 async def cb_restorekents(query: CallbackQuery, db: Database):
-    try:
-        parts = query.data.split(":")
-        action = parts[1]
-        int(parts[-1])
-        target_uid = int(parts[2]) if len(parts) == 4 and parts[2].isdigit() else None
-    except Exception as e:
-        logging.error(f"Ошибка парсинга callback restore: {e}")
+    match = re.fullmatch(
+        r"restore:(?:(all|cancel)|one:([0-9]{1,19})):([0-9]{1,19})", query.data or ""
+    )
+    if not isinstance(query.message, types.Message) or not match:
         await query.answer("Ошибка запроса", show_alert=True)
+        return
+    action = match[1] or "one"
+    target_uid = int(match[2]) if match[2] else None
+    if query.from_user.id != int(match[3]):
+        await query.answer("Это не твоя кнопка", show_alert=True)
         return
 
     clicker_id = query.from_user.id
@@ -546,11 +584,12 @@ async def cb_restorekents(query: CallbackQuery, db: Database):
 
     if action == "all":
         count = await db.run(Repository.restore_initial_kents)
+        if not count:
+            await query.answer("Не удалось восстановить базовый лор", show_alert=True)
+            return
         await query.answer("Кенты восстановлены!")
         await query.message.edit_text(
-            f"✅ <b>Успешно восстановлен базовый лор всех кентов ({count} чел)!</b>\n\n"
-            f"В базу возвращены: Витя-ПК, Жидкер, Таетер, Кунецка, Армор, Кобан, Рафаэль, Спермер.\n"
-            f"Теперь Саня снова помнит всю банду как положено.",
+            f"Базовые заметки проверены для {count} кентов. Ручные факты на месте.",
             reply_markup=None,
             parse_mode="HTML",
         )
@@ -574,14 +613,16 @@ async def cb_restorekents(query: CallbackQuery, db: Database):
 
 async def cmd_kentsummary(message: types.Message, bot: Bot, db: Database, llm: Ollama):
     """Генерирует живое нейро-саммари по всей банде или по конкретному кенту на основе фактов из БД."""
-    raw_args = message.text.partition(" ")[2].strip() if message.text else ""
+    raw_args = command_args(message)
 
     target_id = None
     target_name = ""
 
     # Проверяем, указан ли конкретный кент через аргумент (@username, id) или реплай
     if raw_args or message.reply_to_message:
-        t_id, t_name, _, err = await resolve_target_user(db, message, raw_args)
+        t_id, t_name, _, err = await resolve_target_user(
+            db, message, raw_args, allow_kent_aliases=True
+        )
         if err:
             await message.reply(err)
             return
@@ -668,7 +709,7 @@ async def cmd_kentsummary(message: types.Message, bot: Bot, db: Database, llm: O
 
 async def cmd_setchat(message: types.Message, db: Database):
     """Команда для добавления/просмотра/удаления лора конфы: /setchat <текст> или /setchat <chat_id> <текст>"""
-    raw_args = message.text.partition(" ")[2].strip() if message.text else ""
+    raw_args = command_args(message)
     caller_id = message.from_user.id if message.from_user else 0
 
     target_chat_id = message.chat.id
@@ -677,10 +718,21 @@ async def cmd_setchat(message: types.Message, db: Database):
 
     # Поддержка явного указания chat_id первым аргументом (например: /setchat -1003672879438 факты...)
     if raw_args:
-        first_token, _, rest = raw_args.partition(" ")
-        if first_token.startswith("-100") and first_token[1:].isdigit():
-            target_chat_id = int(first_token)
-            new_lore = rest.strip()
+        first_token, *rest = raw_args.split(maxsplit=1)
+        if re.fullmatch(r"-100[0-9]+", first_token):
+            parsed = parse_positive_ids(first_token[1:])
+            if not parsed:
+                await message.reply("Некорректный ID чата")
+                return
+            target_chat_id = -parsed[0]
+            if target_chat_id != message.chat.id and not await check_is_admin(
+                None, caller_id
+            ):
+                await message.reply(
+                    "Работать с лором другого чата может только админ бота"
+                )
+                return
+            new_lore = rest[0] if rest else ""
             saved_prof = await db.run(Repository.get_chat_profile, target_chat_id)
             if saved_prof and saved_prof["title"]:
                 target_chat_title = saved_prof["title"]
@@ -702,7 +754,7 @@ async def cmd_setchat(message: types.Message, db: Database):
             entries_lines.append(
                 "❌ <i>Удалить факт:</i> <code>/delchat &lt;ID&gt;</code> (или <code>/setchat del &lt;ID&gt;</code>)"
             )
-            await message.reply("\n".join(entries_lines), parse_mode="HTML")
+            await reply_html_lines(message, entries_lines)
         else:
             await message.reply(
                 f"Для конфы <b>{html.escape(target_chat_title)}</b> (<code>{target_chat_id}</code>) факты еще не записаны.\n\n"
@@ -722,7 +774,7 @@ async def cmd_setchat(message: types.Message, db: Database):
         else None
     )
     if del_match:
-        entry_ids = [int(x) for x in re.findall(r"\b\d+\b", del_match.group(1))]
+        entry_ids = parse_positive_ids(del_match.group(1))
         if not entry_ids:
             await message.reply("Укажи хотя бы один ID для удаления!")
             return
@@ -742,7 +794,7 @@ async def cmd_setchat(message: types.Message, db: Database):
             for eid, _, content in deleted:
                 snippet = content[:80] + ("..." if len(content) > 80 else "")
                 out_lines.append(f"• <b>[#{eid}]</b> <i>{html.escape(snippet)}</i>")
-            await message.reply("\n".join(out_lines), parse_mode="HTML")
+            await reply_html_lines(message, out_lines)
         else:
             await message.reply(
                 "Указанные ID записей не найдены в лоре этой конфы.\n"
@@ -766,9 +818,12 @@ async def cmd_setchat(message: types.Message, db: Database):
         new_lore,
         caller_id,
     )
+    if entry_id is None:
+        await message.reply("Не удалось сохранить лор чата")
+        return
     await message.reply(
         f"Добавил факт <b>[#{entry_id}]</b> в лор конфы <b>{html.escape(target_chat_title)}</b> (<code>{target_chat_id}</code>):\n\n"
-        f"<i>{html.escape(new_lore)}</i>\n\n"
+        f"<i>{html.escape(new_lore[:500])}</i>\n\n"
         f"Теперь Саня будет учитывать этот факт во всех беседах здесь.\n\n"
         f"💡 <i>Все факты конфы:</i> <code>/setchat</code>\n"
         f"❌ <i>Удалить этот факт:</i> <code>/delchat {entry_id}</code>",
@@ -786,12 +841,21 @@ async def cmd_delchat(message: types.Message, db: Database):
         )
         return
 
-    raw_args = message.text.partition(" ")[2].strip() if message.text else ""
+    raw_args = command_args(message)
     target_chat_id = message.chat.id
 
     parts = raw_args.split()
-    if parts and parts[0].startswith("-100") and parts[0][1:].isdigit():
-        target_chat_id = int(parts[0])
+    if parts and re.fullmatch(r"-100[0-9]+", parts[0]):
+        parsed = parse_positive_ids(parts[0][1:])
+        if not parsed:
+            await message.reply("Некорректный ID чата")
+            return
+        target_chat_id = -parsed[0]
+        if target_chat_id != message.chat.id and not await check_is_admin(
+            None, caller_id
+        ):
+            await message.reply("Работать с лором другого чата может только админ бота")
+            return
         entry_ids = parse_positive_ids(" ".join(parts[1:]))
     else:
         entry_ids = parse_positive_ids(" ".join(parts))
@@ -815,7 +879,7 @@ async def cmd_delchat(message: types.Message, db: Database):
         for eid, _, content in deleted:
             snippet = content[:80] + ("..." if len(content) > 80 else "")
             out_lines.append(f"• <b>[#{eid}]</b> <i>{html.escape(snippet)}</i>")
-        await message.reply("\n".join(out_lines), parse_mode="HTML")
+        await reply_html_lines(message, out_lines)
     else:
         await message.reply(
             f"Ни одна из записей с ID {entry_ids} не найдена в лоре конфы.\n"

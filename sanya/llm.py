@@ -96,9 +96,10 @@ class Ollama:
         is_coding_request: bool = False,
         *,
         complete: bool = False,
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> str:
         try:
-            context = fit_prompt({"role": "system", "content": SYSTEM_PROMPT}, messages)
+            context = fit_prompt({"role": "system", "content": system_prompt}, messages)
         except ValueError:
             log.warning("Текущий запрос не помещается в бюджет")
             return "Запрос целиком не влезает\nКинь его частями тогда"

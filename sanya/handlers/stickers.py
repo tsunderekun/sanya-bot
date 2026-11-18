@@ -1,3 +1,5 @@
+import html
+import logging
 import re
 
 from aiogram import Bot, Router, types
@@ -7,11 +9,21 @@ from ..database import Database
 from ..repository import Repository
 from ..services.stickers import send_sanya_sticker
 from .access import check_is_admin
+from .command_args import command_args, reply_html_lines
+
+_PACK = re.compile(
+    r"(?:(?:https?://)?t\.me/addstickers(?:/|\?set=))?([a-z0-9_]{1,64})/?", re.I
+)
+
+
+def pack_name_from_arg(arg: str) -> str | None:
+    match = _PACK.fullmatch(arg)
+    return match[1] if match else None
 
 
 async def cmd_stickers(message: types.Message, db: Database):
     packs = await db.run(Repository.get_sticker_packs)
-    total_stk = await db.run(Repository.get_cached_stickers_count)
+    total_stk = sum(p["sticker_count"] for p in packs)
     if not packs:
         await message.reply(
             "В базе пока нет стикерпаков\nСинхронизирую при старте бота"
@@ -22,20 +34,20 @@ async def cmd_stickers(message: types.Message, db: Database):
     ]
     for p in packs:
         is_def = " <i>(базовый пак)</i>" if p["is_default"] else ""
-        cnt = await db.run(Repository.get_cached_stickers_count, p["pack_name"])
+        cnt = p["sticker_count"]
+        name = html.escape(p["pack_name"], quote=True)
+        title = html.escape(p["title"] or p["pack_name"])
         lines.append(
-            f'• <a href="https://t.me/addstickers/{p["pack_name"]}">{p["title"] or p["pack_name"]}</a> ({cnt} шт.){is_def}'
+            f'• <a href="https://t.me/addstickers/{name}">{title}</a> ({cnt} шт.){is_def}'
         )
     lines.append(
         "\n<i>Команды: /sticker [эмодзи] — кинуть стикер, /addstickers &lt;ссылка&gt; — добавить пак</i>"
     )
-    await message.reply(
-        "\n".join(lines), parse_mode="HTML", disable_web_page_preview=True
-    )
+    await reply_html_lines(message, lines, disable_web_page_preview=True)
 
 
 async def cmd_sticker(message: types.Message, bot: Bot, db: Database):
-    args = message.text.partition(" ")[2].strip()
+    args = command_args(message)
     target_emoji = args if args else None
     reply_to = (
         message.reply_to_message.message_id
@@ -58,31 +70,23 @@ async def cmd_addstickers(message: types.Message, bot: Bot, db: Database):
         )
         return
 
-    args = message.text.partition(" ")[2].strip()
-    if not args:
+    pack_name = pack_name_from_arg(command_args(message))
+    if not pack_name:
         await message.reply(
             "Кинь ссылку на стикерпак или его имя\nПример: /addstickers https://t.me/addstickers/anon_pony"
         )
         return
 
-    match = re.search(r"(?:addstickers/|addstickers\?set=|^)([a-zA-Z0-9_]+)", args)
-    pack_name = match.group(1) if match else args.strip()
-
     try:
         s = await bot.get_sticker_set(name=pack_name)
-    except Exception as e:
+        pack_name = s.name
+    except Exception:
+        logging.exception("Не удалось загрузить стикерпак %s", pack_name)
         await message.reply(
-            f"Не смог найти такой стикерпак в телеге\nПроверь название: {e}"
+            "Не смог загрузить стикерпак из Телеги. Проверь название или попробуй позже."
         )
         return
 
-    await db.run(
-        Repository.add_sticker_pack,
-        pack_name,
-        s.title,
-        is_default=False,
-        added_by=user_id,
-    )
     stk_items = []
     for st in s.stickers:
         stk_items.append(
@@ -97,9 +101,17 @@ async def cmd_addstickers(message: types.Message, bot: Bot, db: Database):
                 "sanya_weight": 1.0,
             }
         )
-    await db.run(Repository.save_cached_stickers, stk_items)
+    if not await db.run(
+        Repository.add_sticker_pack,
+        pack_name,
+        s.title,
+        added_by=user_id,
+        stickers=stk_items,
+    ):
+        await message.reply("Не удалось сохранить стикерпак в базу")
+        return
     await message.reply(
-        f'Зашибись, добавил стикерпак <b><a href="https://t.me/addstickers/{pack_name}">{s.title}</a></b> ({len(stk_items)} стикеров)!\n'
+        f'Зашибись, добавил стикерпак <b><a href="https://t.me/addstickers/{pack_name}">{html.escape(s.title)}</a></b> ({len(stk_items)} стикеров)!\n'
         f"Теперь буду его тоже юзать в чате.",
         parse_mode="HTML",
     )
@@ -112,15 +124,12 @@ async def cmd_delstickers(message: types.Message, db: Database):
         await message.reply("Сносить паки могут только админы конфы\nНе трогай чужое")
         return
 
-    args = message.text.partition(" ")[2].strip()
-    if not args:
+    pack_name = pack_name_from_arg(command_args(message))
+    if not pack_name:
         await message.reply(
             "Укажи имя стикерпака для удаления\nПример: /delstickers custom_pack"
         )
         return
-
-    match = re.search(r"(?:addstickers/|addstickers\?set=|^)([a-zA-Z0-9_]+)", args)
-    pack_name = match.group(1) if match else args.strip()
 
     is_def = await db.run(Repository.is_default_sticker_pack, pack_name)
     if is_def:

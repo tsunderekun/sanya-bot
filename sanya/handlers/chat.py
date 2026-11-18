@@ -7,7 +7,13 @@ from aiogram.enums import ChatType
 
 from ..config import MAX_PROACTIVE_PER_HOUR, ORIGINAL_SANYA_ID
 from ..database import Database
-from ..intent import SANYA_FAVORITE_TOPICS_PATTERN
+from ..intent import (
+    SANYA_FAVORITE_TOPICS_PATTERN,
+    is_bot_mention,
+    is_bot_name_call,
+    suppress_background_reply,
+)
+from ..observations import message_self_facts
 from ..repository import Repository
 from ..services.queue import RequestQueue
 from ..services.stickers import try_react_whale
@@ -18,14 +24,10 @@ async def handle_message(
 ):
     if not message.from_user or message.from_user.is_bot:
         return
-    # Фоновая реакция кита 🐳 на сообщение (с определенным шансом или при упоминании)
-    await try_react_whale(message)
-
     # Обновляем профиль пользователя для каждого пишущего
-    if message.from_user:
-        uname = message.from_user.username or ""
-        fname = message.from_user.first_name or ""
-        await db.run(Repository.update_user_profile, message.from_user.id, uname, fname)
+    uname = message.from_user.username or ""
+    fname = message.from_user.first_name or ""
+    await db.run(Repository.update_user_profile, message.from_user.id, uname, fname)
 
     # Обновляем название чата, если это группа
     if (
@@ -37,7 +39,8 @@ async def handle_message(
     has_photo = bool(message.photo)
     has_reply_photo = bool(message.reply_to_message and message.reply_to_message.photo)
     has_sticker = bool(message.sticker)
-    raw_text = message.text or message.caption or ""
+    address_text = message.text or message.caption or ""
+    raw_text = address_text
 
     if has_sticker:
         stk_emoji = message.sticker.emoji or "❓"
@@ -55,34 +58,37 @@ async def handle_message(
         and message.reply_to_message.from_user.id == bot_user.id
     )
 
-    bot_username = (bot_user.username or "").lower()
-    text_lower = raw_text.lower()
-    is_mentioned = bool(bot_username and f"@{bot_username}" in text_lower)
-
-    is_called_by_name = any(
-        trigger in text_lower
-        for trigger in [
-            "саня",
-            "санек",
-            "сань",
-            "спермер",
-            "пониеб",
-            "пониёб",
-            "ponyeb",
-            "сперма",
-        ]
-    )
+    is_mentioned = is_bot_mention(address_text, bot_user.username)
+    is_called_by_name = is_bot_name_call(address_text)
 
     is_from_original_sanya = bool(
         message.from_user and message.from_user.id == ORIGINAL_SANYA_ID
     )
 
     should_respond = is_private or is_reply_to_bot or is_mentioned or is_called_by_name
+    self_facts = (
+        message_self_facts(message, address_text)
+        if message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+        else ()
+    )
+    if self_facts:
+        await db.run(
+            Repository.record_self_facts,
+            message.chat.id,
+            message.from_user.id,
+            self_facts,
+        )
+    background_blocked = not should_respond and (
+        bool(self_facts) or suppress_background_reply(address_text)
+    )
+    if not background_blocked and not self_facts:
+        await try_react_whale(message)
 
     # Проверка на проактивный ответ Сани на любимые темы (max 3 в час на чат)
     is_proactive = False
     if (
         not should_respond
+        and not background_blocked
         and not is_private
         and not is_from_original_sanya
         and not (message.from_user and message.from_user.is_bot)
@@ -132,14 +138,8 @@ async def handle_message(
             "user",
             raw_text,
         )
-        # Автоматический анализ фактов и частоты фраз в фоне
-        await db.run(
-            Repository.analyze_message_for_auto_facts,
-            message.chat.id,
-            message.from_user.id,
-            sender_name,
-            raw_text,
-        )
+        if not self_facts:
+            await db.run(Repository.analyze_chat_phrases, message.chat.id, raw_text)
         return
 
     # Если обратились к боту или сработал проактивный ответ — ставим в очередь

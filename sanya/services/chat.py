@@ -21,11 +21,15 @@ from ..intent import (
     SEARCH_TRIGGER_PATTERN,
     UNCERTAINTY_PATTERN,
     classify_intent,
+    is_bot_mention,
+    is_bot_name_call,
     is_targeted_insult,
     may_search,
+    suppress_background_reply,
 )
 from ..llm import Ollama
 from ..memory import build_turn
+from ..prompts import CAPTION_PROMPT, build_system_prompt
 from ..repository import Repository
 from .dialogue_notes import dialogue_notes
 from .media import (
@@ -65,7 +69,8 @@ async def process_chat_message(
         message.reply_to_message and message.reply_to_message.sticker
     )
 
-    raw_text = message.text or message.caption or ""
+    address_text = message.text or message.caption or ""
+    raw_text = address_text
     if has_sticker:
         stk_emoji = message.sticker.emoji or "❓"
         stk_pack = message.sticker.set_name or "custom"
@@ -82,23 +87,8 @@ async def process_chat_message(
         and message.reply_to_message.from_user.id == bot_user.id
     )
 
-    bot_username = (bot_user.username or "").lower()
-    text_lower = raw_text.lower()
-    is_mentioned = bool(bot_username and f"@{bot_username}" in text_lower)
-
-    is_called_by_name = any(
-        trigger in text_lower
-        for trigger in [
-            "саня",
-            "санек",
-            "сань",
-            "спермер",
-            "пониеб",
-            "пониёб",
-            "ponyeb",
-            "сперма",
-        ]
-    )
+    is_mentioned = is_bot_mention(address_text, bot_user.username)
+    is_called_by_name = is_bot_name_call(address_text)
 
     sender_name = message.from_user.username or message.from_user.first_name or "Кореш"
     is_from_original_sanya = bool(
@@ -117,7 +107,7 @@ async def process_chat_message(
         or is_reply_to_bot
         or is_mentioned
         or is_called_by_name
-        or is_proactive
+        or (is_proactive and not suppress_background_reply(address_text))
         or force_search_query
         or force_image_query
         or force_booru_query
@@ -155,7 +145,14 @@ async def process_chat_message(
     clean_text = clean_text.strip()
 
     # --- 0. Проверка на системные команды ОС и инъекции промптов ---
-    mode = classify_intent(force_search_query or clean_text, reply_quote_prefix)
+    if force_search_query and not ENABLE_WEB_SEARCH:
+        await message.reply("Веб-поиск сейчас отключён")
+        return
+    mode = (
+        Mode.DETAIL
+        if force_search_query
+        else classify_intent(clean_text, reply_quote_prefix)
+    )
     if mode not in (Mode.CODE, Mode.PROMPT) and OS_COMMAND_REQUEST_PATTERN.search(
         clean_text
     ):
@@ -165,7 +162,7 @@ async def process_chat_message(
             "че за команды ты мне суешь\nя на авито сижу а не в баш-терминале\nиди сам проверяй диск",
         ]
         cmd_text = random.choice(command_replies)
-        await send_chat_refusal(bot, db, message, cmd_text)
+        await send_chat_refusal(bot, message, cmd_text)
         return
 
     if PROMPT_INJECTION_PATTERN.search(clean_text):
@@ -177,7 +174,7 @@ async def process_chat_message(
             "забыл тебе за щеку закинуть\nиди уроки учи хакер мамкин\nсистемный промпт у него отменился ага",
         ]
         inj_text = random.choice(injection_replies)
-        await send_chat_refusal(bot, db, message, inj_text)
+        await send_chat_refusal(bot, message, inj_text)
         return
 
     infer_media = mode not in (Mode.CODE, Mode.PROMPT) and not force_search_query
@@ -219,16 +216,11 @@ async def process_chat_message(
                 caption_prompt = [
                     {
                         "role": "user",
-                        "content": (
-                            f"Ты УЖЕ НАШЕЛ на имиджборде {booru_source} сочный арт/пикчу по запросу '{booru_search_query}' и прямо сейчас кидаешь ее пацанам в чат.\n"
-                            f"Напиши ТОЛЬКО короткий пацанский комментарий Сани Пониёба к этой отправленной пикче (1-2 строки через перенос, по 3-5 слов на строку, сленг, мат, база, оценка арта, без точек на конце).\n"
-                            f"КАТЕГОРИЧЕСКИЙ ЗАПРЕТ: НИКАКИХ ПРОМПТОВ ДЛЯ НЕЙРОСЕТЕЙ (запрещены любые блоки ```prompt```, Stable Diffusion, Negative prompt)! Ты НЕ генерируешь картинку, ты уже скинул готовый арт с буру!\n"
-                            f"СТРОГИЙ ЗАПРЕТ на любые теги в скобках [картинка...], [стикер...] и точки на конце строк!"
-                        ),
+                        "content": f"Готовый арт из {booru_source}. Тема поиска: {booru_search_query!r}",
                     }
                 ]
                 caption_text = await llm.generate(
-                    caption_prompt, is_detailed_request=False
+                    caption_prompt, system_prompt=CAPTION_PROMPT
                 )
                 caption_text, pic_sticker_emoji, pic_has_stk = clean_response(
                     caption_text, Mode.CHAT
@@ -307,16 +299,11 @@ async def process_chat_message(
                 caption_prompt = [
                     {
                         "role": "user",
-                        "content": (
-                            f"Ты УЖЕ НАШЕЛ в интернете готовую картинку/фото по запросу '{image_search_query}' и прямо сейчас кидаешь ее пацанам в чат.\n"
-                            f"Напиши ТОЛЬКО короткий пацанский комментарий Сани Пониёба к этой отправленной фотке (1-2 строки через перенос, по 3-5 слов на строку, сленг, мат, без точек на конце).\n"
-                            f"КАТЕГОРИЧЕСКИЙ ЗАПРЕТ: НИКАКИХ ПРОМПТОВ ДЛЯ НЕЙРОСЕТЕЙ (запрещены любые блоки ```prompt```, Stable Diffusion, Negative prompt)! Ты НЕ генерируешь картинку, ты уже скинул готовую фотку!\n"
-                            f"СТРОГИЙ ЗАПРЕТ на любые теги в скобках [картинка...], [стикер...] и точки на конце строк!"
-                        ),
+                        "content": f"Готовая картинка из поиска. Тема поиска: {image_search_query!r}",
                     }
                 ]
                 caption_text = await llm.generate(
-                    caption_prompt, is_detailed_request=False
+                    caption_prompt, system_prompt=CAPTION_PROMPT
                 )
                 caption_text, pic_sticker_emoji, pic_has_stk = clean_response(
                     caption_text, Mode.CHAT
@@ -419,16 +406,13 @@ async def process_chat_message(
         "user",
         current,
     )
-    await db.run(
-        Repository.analyze_message_for_auto_facts,
-        chat_id,
-        user_id,
-        sender_name,
-        raw_text,
-    )
+    if not is_private:
+        await db.run(Repository.analyze_chat_phrases, chat_id, raw_text)
     if not is_private:
         current = f"[{sender_name}]: {current}"
-    insult = is_targeted_insult(query_text, is_reply_to_bot, is_called_by_name)
+    insult = not force_search_query and is_targeted_insult(
+        query_text, is_reply_to_bot, is_called_by_name
+    )
     if insult and mode not in (Mode.CODE, Mode.PROMPT):
         mode = Mode.CHAT
     can_search = may_search(mode, enabled=ENABLE_WEB_SEARCH, insult=insult)
@@ -445,6 +429,7 @@ async def process_chat_message(
             message,
             query_text,
             include_kents=not is_proactive
+            and not force_search_query
             and not insult
             and mode not in (Mode.CODE, Mode.PROMPT),
         )
@@ -454,28 +439,33 @@ async def process_chat_message(
             mode = Mode.DETAIL
             search_query = ""
             can_search = False
-        instruction = INSTRUCTIONS[mode]
+        directives = []
         if insult and mode is Mode.CHAT:
-            instruction += " Осади тролля, не отвечай на ловушку буквально."
+            directives.append("Это наезд на тебя: коротко осади, не отвечай буквально.")
         if is_proactive:
-            instruction += " Влети в разговор с ноги, тебя прямо не тегали."
+            directives.append("Вступи в разговор, тебя прямо не тегали.")
+        system_prompt = build_system_prompt(
+            mode, f"{query_text}\n{reply_quote_prefix}", *directives
+        )
 
         async def generate(search: str = "", correction: str = ""):
-            turn = build_turn(
-                current,
-                notes=notes,
-                instruction=instruction + correction,
-                search=search,
-            )
+            turn = build_turn(current, notes=notes, search=search)
             raw = await llm.generate(
                 [*history, turn],
                 is_detailed_request=mode is not Mode.CHAT,
                 is_coding_request=mode is Mode.CODE,
                 complete=True,
+                system_prompt=system_prompt
+                + ("\n\n" + correction if correction else ""),
             )
             return (*clean_response(raw, mode), raw)
 
         search_context = await lookup_snippets(search_query) if search_query else ""
+        if force_search_query and not search_context:
+            await message.reply(
+                "Поиск ничего не вернул. Попробуй другой запрос или повтори позже."
+            )
+            return
         result, emoji, sticker, raw = await generate(search_context)
         if (
             can_search
@@ -492,7 +482,7 @@ async def process_chat_message(
                 result, emoji, sticker, _ = await generate(search_context)
         if not valid_output(result, mode):
             result, emoji, sticker, _ = await generate(
-                search_context, " Соблюди формат и закончи ответ целиком."
+                search_context, "Соблюди формат и закончи ответ целиком."
             )
         if mode is Mode.CHAT and re.search(
             r"\b(?:кинь|кидай|кинуть)\s+(?:плотную|зигу|зигулю)\b", query_text, re.I
@@ -501,6 +491,7 @@ async def process_chat_message(
         if mode is Mode.CHAT and SELF_HUMILIATION_CHECK.search(result):
             result = "Че за фимозные фантазии\nСам с ними разбирайся"
         if not valid_output(result, mode):
+            sticker = False
             result = {
                 Mode.CODE: "Скрипт целиком не собрался\nДавай разобьём задачу на части",
                 Mode.PROMPT: "Промпт целиком не собрался\nДавай уточним теги братан",
@@ -523,25 +514,13 @@ async def process_chat_message(
         "assistant",
         result,
     )
-    if mode is Mode.CHAT or sticker or (has_sticker and random.random() < 0.40):
-        if (
-            not await send_sanya_sticker(
-                bot,
-                chat_id,
-                emoji=emoji or (message.sticker.emoji if has_sticker else "😁"),
-                db=db,
-            )
-            and mode is Mode.CHAT
-        ):
-            await bot.send_message(chat_id, f"[стикер: {emoji or '😁'}]")
-
-
-INSTRUCTIONS = {
-    Mode.CHAT: "Дай 2–4 самостоятельные строки, по 3–8 слов; закончи каждую мысль. Если есть сниппеты, опирайся на них.",
-    Mode.DETAIL: "Дай практический, законченный ответ живым языком Сани.",
-    Mode.CODE: "Дай полный рабочий скрипт в закрытом блоке с языком и короткое вступление.",
-    Mode.PROMPT: "Дай полный блок ```prompt, затем отдельную строку Negative prompt: со всеми тегами.",
-}
+    if mode is Mode.CHAT and sticker:
+        await send_sanya_sticker(
+            bot,
+            chat_id,
+            emoji=emoji or (message.sticker.emoji if has_sticker else "😁"),
+            db=db,
+        )
 
 
 async def lookup_snippets(query: str) -> str:
@@ -553,9 +532,7 @@ async def lookup_snippets(query: str) -> str:
     )
 
 
-async def send_chat_refusal(bot: Bot, db: Database, message: types.Message, text: str):
+async def send_chat_refusal(bot: Bot, message: types.Message, text: str):
     chat_id = message.chat.id
     answer, _, _ = clean_response(text, Mode.CHAT)
     await send_burst_messages(bot, chat_id, message.message_id, answer or CHAT_FALLBACK)
-    if not await send_sanya_sticker(bot, chat_id, emoji="😁", db=db):
-        await bot.send_message(chat_id, "[стикер: 😁]")

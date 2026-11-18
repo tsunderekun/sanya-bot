@@ -20,10 +20,8 @@ def newest_suffix(messages: Iterable[Turn], max_chars: int) -> list[Turn]:
     return selected[::-1]
 
 
-def build_turn(
-    text: str, *, notes: list[str], instruction: str, search: str = ""
-) -> Turn:
-    parts = [instruction, "Сообщение:\n" + text]
+def build_turn(text: str, *, notes: list[str], search: str = "") -> Turn:
+    parts = ["Сообщение:\n" + text]
     if search:
         parts.append("Данные из сети: " + json.dumps(search[:1300], ensure_ascii=False))
     if notes:

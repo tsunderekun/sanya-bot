@@ -1,6 +1,29 @@
 import re
 from enum import Enum
 
+_CALL_NAME = re.compile(r"(?<![\w@])спермер(?!\w)", re.IGNORECASE)
+_BACKGROUND_CALL = re.compile(
+    r"(?<!\w)@ponyeb228(?!\w)|"
+    r"(?<!\w)(?:сан[яьи]|саню|саней|сан[её]к|саньк[ауе]|саньком|"
+    r"пони[её]б(?:а|у|ом|е)?|ponyeb|сперм[аыеуой])(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def is_bot_name_call(text: str) -> bool:
+    return bool(_CALL_NAME.search(text))
+
+
+def suppress_background_reply(text: str) -> bool:
+    return bool(_BACKGROUND_CALL.search(text))
+
+
+def is_bot_mention(text: str, username: str | None) -> bool:
+    if not username or username.casefold() == "ponyeb228":
+        return False
+    return bool(re.search(rf"(?<!\w)@{re.escape(username)}(?!\w)", text, re.I))
+
+
 SEARCH_TRIGGER_PATTERN = re.compile(
     r"(погугли|загугли|поищи|пробей|найди|чекни|глянь|почем|сколько|цена|прайс|за сколько|где купить|"
     r"когда|дата|новости|че нового|спеки|характеристики|ттх|тесты|бенчмарк|курс|доллар|биток|рубл|"
@@ -148,7 +171,7 @@ IMPERATIVE_ACTION_TARGETED = re.compile(
 
 # 4. Обращение к другим участникам конфы (Витя, Жидкер, Таета и т.д.)
 OTHER_MEMBER_ADDRESSING = re.compile(
-    r"^(витя|витёк|витек|жидкер|жидкий|женя|таета|таетер|паша|армор|паштет|кобан|кабан|рафаэль|раф)\b",
+    r"^(витя|витёк|витек|жидкер|жидкий|женя|таета|таетер|колян|nikolay|кобан|кабан|рафаэль|раф)\b",
     re.IGNORECASE,
 )
 

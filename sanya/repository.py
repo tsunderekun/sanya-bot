@@ -6,6 +6,11 @@ from typing import Dict, List, Optional, Tuple
 
 from .config import MAX_CONTEXT_CHARS, MAX_HISTORY, TOP_STICKERS_CHANCE
 from .lore import DEFAULT_STICKER_PACKS, INITIAL_KENTS_PROFILES
+from .observations import self_fact_prefix
+
+
+class AmbiguousUsername(ValueError):
+    pass
 
 
 class Repository:
@@ -15,7 +20,13 @@ class Repository:
         self.connection = connection
 
     def add_sticker_pack(
-        self, pack_name: str, title: str, is_default: bool = False, added_by: int = 0
+        self,
+        pack_name: str,
+        title: str,
+        is_default: bool = False,
+        added_by: int = 0,
+        *,
+        stickers: List[Dict] | None = None,
     ):
         """Добавляет или обновляет стикерпак в БД."""
         try:
@@ -30,20 +41,25 @@ class Repository:
                 """,
                     (pack_name, title, 1 if is_default else 0, added_by),
                 )
+                if stickers is not None:
+                    self._save_cached_stickers(conn, stickers)
+            return True
         except Exception as e:
             logging.error(f"Ошибка сохранения стикерпака {pack_name}: {e}")
+            return False
 
     def remove_sticker_pack(self, pack_name: str) -> bool:
         """Удаляет добавленный пользователями стикерпак и его кэш (базовые защищены)."""
         try:
             with self.connection as conn:
                 cur = conn.execute(
-                    "DELETE FROM sticker_packs WHERE pack_name = ? AND is_default = 0",
+                    "DELETE FROM sticker_packs WHERE pack_name = ? COLLATE NOCASE AND is_default = 0",
                     (pack_name,),
                 )
                 if cur.rowcount > 0:
                     conn.execute(
-                        "DELETE FROM cached_stickers WHERE pack_name = ?", (pack_name,)
+                        "DELETE FROM cached_stickers WHERE pack_name = ? COLLATE NOCASE",
+                        (pack_name,),
                     )
                     return True
                 return False
@@ -56,37 +72,37 @@ class Repository:
         try:
             with self.connection as conn:
                 cur = conn.execute(
-                    "SELECT is_default FROM sticker_packs WHERE pack_name = ?",
+                    "SELECT MAX(is_default) AS is_default FROM sticker_packs WHERE pack_name = ? COLLATE NOCASE",
                     (pack_name,),
                 )
                 row = cur.fetchone()
-                if row:
+                if row and row["is_default"] is not None:
                     return bool(row["is_default"])
         except Exception:
             pass
-        return pack_name in DEFAULT_STICKER_PACKS
+        return any(
+            pack_name.casefold() == name.casefold() for name in DEFAULT_STICKER_PACKS
+        )
 
     def get_sticker_packs(self) -> List[sqlite3.Row]:
         """Возвращает список всех стикерпаков в базе."""
         try:
             with self.connection as conn:
                 cur = conn.execute(
-                    "SELECT pack_name, title, is_default, added_by, created_at FROM sticker_packs ORDER BY is_default DESC, pack_name ASC"
+                    """SELECT p.*, COALESCE(c.cnt, 0) AS sticker_count
+                       FROM sticker_packs p LEFT JOIN (
+                           SELECT pack_name, COUNT(*) AS cnt FROM cached_stickers GROUP BY pack_name
+                       ) c USING (pack_name) ORDER BY p.is_default DESC, p.pack_name ASC"""
                 )
                 return cur.fetchall()
         except Exception as e:
             logging.error(f"Ошибка чтения стикерпаков: {e}")
             return []
 
-    def save_cached_stickers(self, stickers: List[Dict]):
-        """Кэширует список стикеров с сохранением весов популярности."""
-        if not stickers:
-            return
-        try:
-            with self.connection as conn:
-                for st in stickers:
-                    conn.execute(
-                        """
+    @staticmethod
+    def _save_cached_stickers(conn, stickers: List[Dict]):
+        conn.executemany(
+            """
                         INSERT INTO cached_stickers (file_id, file_unique_id, pack_name, emoji, file_size, width, height, sanya_weight, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                         ON CONFLICT(file_id) DO UPDATE SET
@@ -96,19 +112,20 @@ class Repository:
                             height = excluded.height,
                             sanya_weight = CASE WHEN excluded.sanya_weight >= 5.0 THEN excluded.sanya_weight ELSE cached_stickers.sanya_weight END;
                     """,
-                        (
-                            st["file_id"],
-                            st.get("file_unique_id", ""),
-                            st["pack_name"],
-                            st.get("emoji", ""),
-                            st.get("file_size", 0),
-                            st.get("width", 0),
-                            st.get("height", 0),
-                            st.get("sanya_weight", 0.005),
-                        ),
-                    )
-        except Exception as e:
-            logging.error(f"Ошибка сохранения стикеров в кэш: {e}")
+            (
+                (
+                    st["file_id"],
+                    st.get("file_unique_id", ""),
+                    st["pack_name"],
+                    st.get("emoji", ""),
+                    st.get("file_size", 0),
+                    st.get("width", 0),
+                    st.get("height", 0),
+                    st.get("sanya_weight", 0.005),
+                )
+                for st in stickers
+            ),
+        )
 
     def get_cached_stickers_count(self, pack_name: Optional[str] = None) -> int:
         """Возвращает число кэшированных стикеров."""
@@ -378,7 +395,9 @@ class Repository:
         except Exception as e:
             logging.error(f"Ошибка обновления названия чата {chat_id}: {e}")
 
-    def find_user_by_username(self, username: str) -> Optional[sqlite3.Row]:
+    def find_user_by_username(
+        self, username: str, *, current_only: bool = False
+    ) -> Optional[sqlite3.Row]:
         """Ищет пользователя по username (с @ или без) в user_profiles и messages."""
         clean_name = username.strip().lstrip("@").lower()
         if not clean_name:
@@ -387,12 +406,16 @@ class Repository:
             with self.connection as conn:
                 # 1. Поиск в таблице user_profiles
                 cur = conn.execute(
-                    "SELECT user_id, user_name, first_name, persona_notes, message_count FROM user_profiles WHERE lower(replace(user_name, '@', '')) = ? LIMIT 1",
+                    "SELECT user_id, user_name, first_name, persona_notes, message_count FROM user_profiles WHERE lower(ltrim(user_name, '@')) = ? ORDER BY last_seen DESC, user_id LIMIT 2",
                     (clean_name,),
                 )
-                row = cur.fetchone()
-                if row:
-                    return row
+                rows = cur.fetchall()
+                if rows:
+                    if current_only and len(rows) > 1:
+                        raise AmbiguousUsername(clean_name)
+                    return rows[0]
+                if current_only:
+                    return None
 
                 # 2. Если не найден в профилях, ищем в истории сообщений messages
                 cur = conn.execute(
@@ -403,8 +426,12 @@ class Repository:
                 if msg_row:
                     return self.get_user_profile(msg_row["user_id"])
                 return None
+        except AmbiguousUsername:
+            raise
         except Exception as e:
             logging.error(f"Ошибка поиска пользователя по нику '{username}': {e}")
+            if current_only:
+                raise
             return None
 
     def update_user_profile(self, user_id: int, user_name: str, first_name: str = ""):
@@ -598,31 +625,12 @@ class Repository:
             logging.error(f"Ошибка сохранения persona_notes для {user_id}: {e}")
 
     def restore_initial_kents(self) -> int:
-        """Восстанавливает базовые профили и лор всех 8 исходных кентов (INITIAL_KENTS_PROFILES) в SQLite."""
+        """Добавляет отсутствующие базовые заметки, не удаляя существующие."""
         try:
             with self.connection as conn:
-                count = 0
                 for uid, pdata in INITIAL_KENTS_PROFILES.items():
-                    conn.execute(
-                        """
-                        INSERT INTO user_profiles (user_id, user_name, first_name, persona_notes, first_seen, last_seen, message_count)
-                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 100)
-                        ON CONFLICT(user_id) DO UPDATE SET
-                            persona_notes = excluded.persona_notes,
-                            user_name = CASE WHEN user_profiles.user_name IS NULL OR user_profiles.user_name = '' THEN excluded.user_name ELSE user_profiles.user_name END,
-                            first_name = CASE WHEN user_profiles.first_name IS NULL OR user_profiles.first_name = '' THEN excluded.first_name ELSE user_profiles.first_name END;
-                    """,
-                        (uid, pdata["user_name"], pdata["first_name"], pdata["notes"]),
-                    )
-                    conn.execute(
-                        "DELETE FROM kent_facts_entries WHERE user_id = ?", (uid,)
-                    )
-                    conn.execute(
-                        "INSERT INTO kent_facts_entries (user_id, content, added_by) VALUES (?, ?, 0)",
-                        (uid, pdata["notes"]),
-                    )
-                    count += 1
-                return count
+                    self._restore_kent(conn, uid, pdata)
+                return len(INITIAL_KENTS_PROFILES)
         except Exception as e:
             logging.error(f"Ошибка восстановления базовых кентов: {e}")
             return 0
@@ -634,32 +642,50 @@ class Repository:
         pdata = INITIAL_KENTS_PROFILES[user_id]
         try:
             with self.connection as conn:
-                conn.execute(
-                    """
-                    INSERT INTO user_profiles (user_id, user_name, first_name, persona_notes, first_seen, last_seen, message_count)
-                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 100)
-                    ON CONFLICT(user_id) DO UPDATE SET
-                        persona_notes = excluded.persona_notes,
-                        user_name = CASE WHEN user_profiles.user_name IS NULL OR user_profiles.user_name = '' THEN excluded.user_name ELSE user_profiles.user_name END,
-                        first_name = CASE WHEN user_profiles.first_name IS NULL OR user_profiles.first_name = '' THEN excluded.first_name ELSE user_profiles.first_name END;
-                """,
-                    (user_id, pdata["user_name"], pdata["first_name"], pdata["notes"]),
-                )
-                conn.execute(
-                    "DELETE FROM kent_facts_entries WHERE user_id = ?", (user_id,)
-                )
-                conn.execute(
-                    "INSERT INTO kent_facts_entries (user_id, content, added_by) VALUES (?, ?, 0)",
-                    (user_id, pdata["notes"]),
-                )
+                self._restore_kent(conn, user_id, pdata)
             return True
         except Exception as e:
             logging.error(f"Ошибка восстановления кента {user_id}: {e}")
             return False
 
+    def _restore_kent(self, conn, user_id, pdata):
+        conn.execute(
+            "INSERT INTO user_profiles (user_id, user_name, first_name) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id) DO NOTHING",
+            (user_id, pdata["user_name"], pdata["first_name"]),
+        )
+        mirror = (
+            conn.execute(
+                "SELECT persona_notes FROM user_profiles WHERE user_id=?", (user_id,)
+            ).fetchone()[0]
+            or ""
+        ).strip()
+        facts = [
+            row[0]
+            for row in conn.execute(
+                "SELECT content FROM kent_facts_entries WHERE user_id=? ORDER BY id",
+                (user_id,),
+            )
+        ]
+        # Preserve legacy notes that were never copied into the fact entries.
+        if mirror and mirror not in (
+            pdata["notes"],
+            "\n".join(f.strip() for f in facts if f and f.strip()),
+        ):
+            conn.execute(
+                "INSERT INTO kent_facts_entries (user_id, content) VALUES (?, ?)",
+                (user_id, mirror),
+            )
+        conn.execute(
+            "INSERT INTO kent_facts_entries (user_id, content, added_by) "
+            "SELECT ?, ?, 0 WHERE NOT EXISTS (SELECT 1 FROM kent_facts_entries WHERE user_id=? AND content=?)",
+            (user_id, pdata["notes"], user_id, pdata["notes"]),
+        )
+        self._sync_user_persona_notes_column(conn, user_id)
+
     def clear_user_data(
         self, user_id: int, delete_profile: bool = False
-    ) -> Tuple[int, bool]:
+    ) -> Tuple[int, bool] | None:
         """
         Удаляет сообщения пользователя из базы данных.
         Если delete_profile=False:
@@ -677,6 +703,10 @@ class Repository:
 
                 if delete_profile:
                     conn.execute(
+                        "DELETE FROM auto_observed_facts WHERE entity_type='user' AND entity_id=?",
+                        (user_id,),
+                    )
+                    conn.execute(
                         "DELETE FROM kent_facts_entries WHERE user_id = ?", (user_id,)
                     )
                     cur_prof = conn.execute(
@@ -693,7 +723,7 @@ class Repository:
                 return deleted_messages, deleted_profile
         except Exception as e:
             logging.error(f"Ошибка очистки данных пользователя {user_id}: {e}")
-            return 0, False
+            return None
 
     def save_message(
         self,
@@ -800,12 +830,15 @@ class Repository:
             logging.error(f"Ошибка чтения истории из SQLite: {e}")
             return [], False
 
-    def clear_history(self, chat_id: int):
+    def clear_history(self, chat_id: int) -> int | None:
         try:
             with self.connection as conn:
-                conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
-        except Exception as e:
-            logging.error(f"Ошибка очистки истории в SQLite: {e}")
+                return conn.execute(
+                    "DELETE FROM messages WHERE chat_id = ?", (chat_id,)
+                ).rowcount
+        except sqlite3.Error:
+            logging.exception("Ошибка очистки истории в SQLite")
+            return None
 
     def prune_old_messages(self, chat_id: int, keep_last: int = 250):
         try:
@@ -851,7 +884,7 @@ class Repository:
             )
 
     def get_auto_facts(
-        self, entity_type: str, entity_id: int, limit: int = 6
+        self, entity_type: str, entity_id: int, limit: int = 6, *, key_prefix: str = ""
     ) -> List[sqlite3.Row]:
         """Возвращает список авто-подмеченных фактов для пользователя или чата."""
         try:
@@ -861,40 +894,57 @@ class Repository:
                     SELECT id, fact_key, fact_text, mention_count, last_seen
                     FROM auto_observed_facts
                     WHERE entity_type = ? AND entity_id = ?
+                        AND substr(fact_key, 1, length(?)) = ?
                     ORDER BY mention_count DESC, last_seen DESC
                     LIMIT ?;
                 """,
-                    (entity_type, entity_id, limit),
+                    (entity_type, entity_id, key_prefix, key_prefix, limit),
                 )
                 return cur.fetchall()
         except Exception as e:
             logging.error(f"Ошибка получения auto_facts: {e}")
             return []
 
-    def delete_auto_facts(self, fact_ids: List[int]) -> List[Tuple[int, str]]:
+    def record_self_facts(
+        self, chat_id: int, user_id: int, facts: tuple[tuple[str, str], ...]
+    ):
+        prefix = self_fact_prefix(chat_id)
+        for key, value in facts:
+            self.record_auto_fact("user", user_id, prefix + key, value)
+
+    def get_self_facts(self, chat_id: int, user_id: int, limit: int = 6):
+        return self.get_auto_facts(
+            "user", user_id, limit, key_prefix=self_fact_prefix(chat_id)
+        )
+
+    def delete_auto_facts(
+        self, fact_ids: List[int], *, chat_id: int | None = None
+    ) -> List[Tuple[int, str]]:
         """
         Удаляет авто-факты по списку ID из auto_observed_facts.
         Возвращает список кортежей (fact_id, fact_text).
         """
         if not fact_ids:
             return []
-        deleted = []
         try:
             with self.connection as conn:
-                for fid in fact_ids:
-                    cur = conn.execute(
-                        "SELECT id, fact_text FROM auto_observed_facts WHERE id = ?",
-                        (fid,),
-                    )
-                    row = cur.fetchone()
-                    if row:
-                        conn.execute(
-                            "DELETE FROM auto_observed_facts WHERE id = ?", (fid,)
-                        )
-                        deleted.append((fid, row["fact_text"]))
+                placeholders = ",".join("?" for _ in fact_ids)
+                scope = (
+                    " AND entity_type = 'chat' AND entity_id = ?"
+                    if chat_id is not None
+                    else ""
+                )
+                params = (
+                    (*fact_ids, chat_id) if chat_id is not None else tuple(fact_ids)
+                )
+                rows = conn.execute(
+                    f"DELETE FROM auto_observed_facts WHERE id IN ({placeholders}){scope} RETURNING id, fact_text",
+                    params,
+                ).fetchall()
+                return sorted((row[0], row[1]) for row in rows)
         except Exception as e:
             logging.error(f"Ошибка удаления авто-фактов {fact_ids}: {e}")
-        return deleted
+        return []
 
     def record_chat_phrase(self, chat_id: int, phrase: str) -> int:
         """Инкрементирует частоту употребления фразы в чате."""
@@ -937,115 +987,15 @@ class Repository:
             logging.error(f"Ошибка get_top_chat_phrases: {e}")
             return []
 
-    def analyze_message_for_auto_facts(
-        self, chat_id: int, user_id: int, user_name: str, text: str
-    ):
-        """
-        Фоновый анализатор входящего сообщения:
-        1. Извлекает факты о железе юзера (GPU, CPU, платформа, ноут, ОС, игры).
-        2. Отслеживает повторяющиеся ключевые фразы/темы в конфе.
-        3. При накоплении частоты продвигает их в долговременную память конфы.
-        """
+    def analyze_chat_phrases(self, chat_id: int, text: str):
+        """Отслеживает повторяющиеся темы конфы отдельно от фактов об участниках."""
         if not text or len(text.strip()) < 3:
             return
 
         text_clean = text.strip()
         t_lower = text_clean.lower()
 
-        # 1. Авто-детект железа и системы пользователя
-        gpu_match = re.search(
-            r"\b(rtx\s*\d{3,4}(?:\s*ti|\s*super)?|gtx\s*\d{3,4}(?:\s*ti)?|rx\s*\d{3,4}(?:\s*xt)?|arc\s*a\d{3}|uhd\s*graphics\s*\d+)\b",
-            t_lower,
-        )
-        if gpu_match:
-            gpu_name = gpu_match.group(0).upper()
-            self.record_auto_fact(
-                "user", user_id, "hardware_gpu", f"Видюха: {gpu_name}"
-            )
-
-        cpu_match = re.search(
-            r"\b(ryzen\s*\d\s*\d{4}[a-z]*|core\s*i[3579][-\s]\d{4,5}[a-z]*|i[3579][-\s]\d{4,5}[a-z]*|xeon\s*e[357][-\s]\d{4}[a-z0-9]*|e5[-\s]\d{4}[a-z0-9]*|2690v\d|2680v\d|2678v\d|2666v\d|2670v\d|2650v\d|pentium|celeron|phenom|athlon)\b",
-            t_lower,
-        )
-        if cpu_match:
-            cpu_name = cpu_match.group(0)
-            self.record_auto_fact("user", user_id, "hardware_cpu", f"Проц: {cpu_name}")
-
-        mb_match = re.search(
-            r"\b(x99|x79|b450|b550|b650|z[3-7]90|lga\s*115[015]|lga\s*1200|lga\s*1700|lga\s*2011(?:-?v[34])?|am4|am5|хуанан(?:джи)?|huananzhi)\b",
-            t_lower,
-        )
-        if mb_match:
-            mb_name = mb_match.group(0)
-            self.record_auto_fact(
-                "user", user_id, "hardware_platform", f"Платформа/мать: {mb_name}"
-            )
-
-        os_match = re.search(
-            r"\b(arch(?:\s*linux)?|арч|ubuntu|убунт[а-я]|debian|дебиан|fedora|федор[а-я]|bazzite|баззит|gentoo|виндовс\s*1[01]|вин[даеы]\s*1[01]|windows\s*1[01]|macos|хакинтош)\b",
-            t_lower,
-        )
-        if os_match:
-            os_name = os_match.group(0)
-            self.record_auto_fact(
-                "user", user_id, "user_os", f"ОС / дистрибутив: {os_name}"
-            )
-
-        lap_match = re.search(
-            r"\b(thinkpad|legion|macbook|эйр|прошка|ноутбук|ноут)\b(?:\s+([a-zA-Z0-9\-]+))?",
-            t_lower,
-        )
-        if lap_match:
-            lap_full = lap_match.group(0)
-            if len(lap_full.split()) > 1 or lap_match.group(1) in (
-                "thinkpad",
-                "legion",
-                "macbook",
-            ):
-                self.record_auto_fact(
-                    "user", user_id, "user_laptop", f"Ноут: {lap_full}"
-                )
-
-        game_match = re.search(
-            r"\b(cs\s*1\.6|кс\s*1\.6|cs\s*2|кс\s*2|dota\s*2|дот[аеу]|дотк[аеу]|валорант|valorant|майнкр[а-я]+|minecraft|сталкер|stalker|тарков|tarkov|battlefield\s*3|бф3|батл[аеу])\b",
-            t_lower,
-        )
-        if game_match:
-            game_name = game_match.group(0)
-            self.record_auto_fact(
-                "user", user_id, "favorite_game", f"Катает в: {game_name}"
-            )
-
-        buy_match = re.search(
-            r"\bя\s+(?:купил|урвал|взял|заказал)\s+([^,.;!?\n]{3,40})", t_lower
-        )
-        if buy_match:
-            item_bought = buy_match.group(1).strip()
-            self.record_auto_fact(
-                "user", user_id, "recent_buy", f"Недавняя покупка: {item_bought}"
-            )
-
-        job_match = re.search(
-            r"\bя\s+(?:работаю|пашу|устроился)\s+(?:в|на|кем)?\s*([^,.;!?\n]{3,40})",
-            t_lower,
-        )
-        if job_match:
-            job_text = job_match.group(1).strip()
-            self.record_auto_fact(
-                "user", user_id, "user_job", f"Работа/занятость: {job_text}"
-            )
-
-        loc_match = re.search(
-            r"\bя\s+(?:живу|переехал)\s+в\s+([а-яёa-z\-]{3,25})", t_lower
-        )
-        if loc_match:
-            loc_name = loc_match.group(1).title()
-            self.record_auto_fact(
-                "user", user_id, "user_location", f"Город / локация: {loc_name}"
-            )
-
-        # 2. Анализ частоты фраз и тем в конфе
-        # Игнорируем команды бота (/), цитаты, реплаи и служебные теги
+        # Игнорируем команды бота и служебные теги
         if text_clean.startswith("/") or "[" in text_clean or "]" in text_clean:
             return
 

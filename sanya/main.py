@@ -115,7 +115,10 @@ async def register_commands(bot: Bot):
                 BotCommand(
                     command="sticker", description="Кинуть фирменный стикер Сани"
                 ),
-                BotCommand(command="clear", description="Сбросить память диалога"),
+                BotCommand(
+                    command="clear",
+                    description="Очистить историю чата (в группе — админ)",
+                ),
                 BotCommand(command="mydata", description="Мои данные и статус кента"),
                 BotCommand(command="forgetme", description="Очистить данные из базы"),
                 BotCommand(

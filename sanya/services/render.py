@@ -9,6 +9,9 @@ MEDIA_TAG = re.compile(
     re.I | re.M,
 )
 EMOJI = re.compile(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\u200D\uFE0F]+")
+TEXT_EMOJI = re.compile(
+    r"[#*0-9]\uFE0F?\u20E3|[\U0001F000-\U0001FAFF\u2600-\u2653\u2660-\u27BF\u200D\uFE0F]+"
+)
 NEGATIVE = re.compile(r"(?im)\bNegative prompt\s*:\s*\S")
 PROMPT_TAIL = re.compile(
     r"(?im)^\s*(?:negative\s+prompt|steps|sampler|cfg\s+scale)\s*:[\s\S]*"
@@ -57,6 +60,7 @@ def clean_response(text: str, mode: Mode) -> tuple[str, str | None, bool]:
         body = MEDIA_TAG.sub(remove_tag, body.replace(r"\r", "").replace(r"\n", "\n"))
         if mode is not Mode.PROMPT:
             body = PROMPT_TAIL.sub("", body)
+            body = TEXT_EMOJI.sub("", body)
         body = body.translate(EXCLAMATION)
         body = re.sub(r"(?m)^\s*#{1,6}\s+", "", body)
         clean.append(re.sub(r"(?m)[.。…]+(?=[ \t]*\r?$)", "", body))

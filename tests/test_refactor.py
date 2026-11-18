@@ -16,7 +16,12 @@ from sanya.main import build_dispatcher
 from sanya.memory import estimate_tokens, fit_prompt
 from sanya.repository import Repository
 from sanya.services.chat import process_chat_message
-from sanya.services.render import clean_response, needs_document, render_messages, valid_output
+from sanya.services.render import (
+    clean_response,
+    needs_document,
+    render_messages,
+    valid_output,
+)
 
 
 def turn(text, role="user"):
@@ -72,6 +77,14 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(render_messages(chat, detailed=False)), 2)
         self.assertFalse(valid_output("```python\nfor x in:\n```", Mode.CODE))
 
+    def test_render_uses_emoji_only_as_sticker_hint(self):
+        reply = "ну вот приехали 😁\nдавай покажи что случилось 1️⃣\n[стикер: 😵‍💫]"
+        self.assertEqual(
+            clean_response(reply, Mode.CHAT),
+            ("Ну вот приехали\nДавай покажи что случилось", "😵‍💫", True),
+        )
+        self.assertEqual(clean_response("Проверь кабель 🔌", Mode.DETAIL)[0], "Проверь кабель")
+
     def test_intents_and_budget(self):
         for text, quote, mode in (
             ("напиши bash скрипт для поиска картинок", "", Mode.CODE),
@@ -122,6 +135,11 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(send.await_args.args[3], answer)
                     self.assertEqual(llm.generate.await_count, 2)
                     self.assertIn(query, llm.generate.await_args.args[0][-1]["content"])
+                    system = llm.generate.await_args.kwargs["system_prompt"]
+                    expected_format = "Negative prompt:" if "промпт" in query else "полный рабочий код"
+                    self.assertIn(expected_format, system)
+                    self.assertIn("Соблюди формат", system)
+                    self.assertNotIn("Соблюди формат", llm.generate.await_args.args[0][-1]["content"])
                     message.message_id += 1
 
     async def test_legacy_migration_and_current_turn_filter(self):

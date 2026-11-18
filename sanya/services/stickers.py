@@ -89,14 +89,6 @@ async def sync_sticker_packs(bot: Bot, db: Database):
             if cnt > 0:
                 continue
             s = await bot.get_sticker_set(name=pack_name)
-            await db.run(
-                Repository.add_sticker_pack,
-                pack_name,
-                s.title,
-                is_default=True,
-                added_by=0,
-            )
-
             top_weights = {
                 item["file_id"]: item["weight"]
                 for item in ORIGINAL_SANYA_TOP_STICKERS
@@ -122,7 +114,14 @@ async def sync_sticker_packs(bot: Bot, db: Database):
                         "sanya_weight": weight,
                     }
                 )
-            await db.run(Repository.save_cached_stickers, stk_items)
+            if not await db.run(
+                Repository.add_sticker_pack,
+                pack_name,
+                s.title,
+                is_default=True,
+                stickers=stk_items,
+            ):
+                continue
             logging.info(
                 f"[*] Закэширован базовый стикерпак '{pack_name}' ({len(stk_items)} стикеров)"
             )
