@@ -36,7 +36,12 @@ from ..repository import Repository
 from ..vocabulary import custom_definition, select_words
 from .booru import SINGLE_TAG_HINT, search_and_download_booru_image
 from .dialogue_notes import dialogue_notes
-from .media import extract_image_query, search_and_download_image
+from .media import (
+    extract_image_query,
+    pic_identity,
+    pic_query_key,
+    search_and_download_image,
+)
 from .meme_lore import asks_about_lore, meme_lore_reply
 from .ocr import recognize_image_text
 from .render import (
@@ -320,7 +325,13 @@ async def process_chat_message(
             keep_typing(bot, message.chat.id, stop_typing)
         )
         try:
-            img_result = await search_and_download_image(image_search_query)
+            query_key = pic_query_key(image_search_query)
+            history = await db.run(
+                Repository.get_pic_history, message.chat.id, query_key
+            )
+            img_result = await search_and_download_image(
+                image_search_query, history=tuple(history)
+            )
             if img_result:
                 img_bytes, img_url = img_result
                 caption_prompt = [
@@ -361,6 +372,12 @@ async def process_chat_message(
                         else:
                             raise
                     await db.run(
+                        Repository.remember_pic,
+                        message.chat.id,
+                        query_key,
+                        *pic_identity(img_bytes, img_url),
+                    )
+                    await db.run(
                         Repository.save_message,
                         message.chat.id,
                         0,
@@ -385,6 +402,16 @@ async def process_chat_message(
         finally:
             stop_typing.set()
             await typing_task
+        if force_image_query:
+            if img_result:
+                await message.reply("Нашёл картинку, но не смог её отправить.")
+            elif history:
+                await message.reply(
+                    "Других картинок по этому запросу не нашёл. Попробуй уточнить запрос."
+                )
+            else:
+                await message.reply("Картинку по этому запросу не нашёл.")
+            return
 
     # --- 2. Чтение картинок (Vision анализ через moondream) ---
     target_photo = None

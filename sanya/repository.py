@@ -616,6 +616,27 @@ class Repository:
                 (chat_id, mode),
             )
 
+    def get_pic_history(self, chat_id: int, query_key: str) -> list[tuple[str, str]]:
+        return [
+            tuple(row)
+            for row in self.connection.execute(
+                "SELECT url_key, digest FROM pic_history WHERE chat_id = ? AND query_key = ?",
+                (chat_id, query_key),
+            )
+        ]
+
+    def remember_pic(self, chat_id: int, query_key: str, url_key: str, digest: str):
+        with self.connection as conn:
+            conn.execute(
+                "INSERT INTO pic_history (chat_id, query_key, url_key, digest) VALUES (?, ?, ?, ?)",
+                (chat_id, query_key, url_key, digest),
+            )
+            conn.execute(
+                "DELETE FROM pic_history WHERE chat_id = ? AND id <= ("
+                "SELECT id FROM pic_history WHERE chat_id = ? ORDER BY id DESC LIMIT 1 OFFSET 200)",
+                (chat_id, chat_id),
+            )
+
     def count_user_chat_messages(self, chat_id: int, user_id: int) -> int:
         return self.connection.execute(
             "SELECT COUNT(*) FROM messages WHERE chat_id = ? AND user_id = ? AND role = 'user'",

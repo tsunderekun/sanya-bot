@@ -3,6 +3,7 @@ import logging
 import random
 import re
 import urllib.parse
+from hashlib import sha256
 from typing import Optional, Tuple
 
 import httpx
@@ -31,70 +32,91 @@ def extract_image_query(text: str) -> str:
     return q if len(q) > 1 else text.strip()
 
 
+def pic_query_key(query: str) -> str:
+    return sha256(" ".join(query.casefold().split()).encode()).hexdigest()
+
+
+def pic_identity(content: bytes, url: str) -> tuple[str, str]:
+    return _pic_url_key(url), sha256(content).hexdigest()
+
+
+def _pic_url_key(url: str) -> str:
+    return sha256(url.split("#", 1)[0].encode()).hexdigest()
+
+
 async def search_and_download_image(
-    query: str, max_candidates: int = 6
+    query: str, max_candidates: int = 6, *, history: tuple[tuple[str, str], ...] = ()
 ) -> Optional[Tuple[bytes, str]]:
-    """
-    Ищет картинку через SearXNG (с фоллбэком на DuckDuckGo)
-    и скачивает байты первого доступного изображения.
-    Возвращает (bytes, url) или None.
-    """
+    """Try unseen results in search order, then fall back to another source."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    candidates = []
+    excluded_urls = {url for url, _ in history}
+    excluded_digests = {digest for _, digest in history}
+    attempted = set()
 
-    # 1. Попытка через SearXNG
-    if SEARCH_ENGINE == "searxng" and SEARXNG_URL:
-        try:
-            async with httpx.AsyncClient(
-                headers=headers, timeout=6.0, follow_redirects=True
-            ) as client:
-                r = await client.get(
-                    f"{SEARXNG_URL.rstrip('/')}/search",
-                    params={"q": query, "categories": "images", "format": "json"},
-                )
-                if r.status_code == 200:
-                    for item in r.json().get("results", [])[:max_candidates]:
-                        url = item.get("img_src") or item.get("url")
-                        if url and url.startswith("http"):
-                            candidates.append(url)
-        except Exception as e:
-            logging.warning(f"Ошибка поиска картинок SearXNG: {e}")
-
-    # 2. Фоллбэк на DuckDuckGo если SearXNG не вернул кандидатов
-    if not candidates:
-        try:
-
-            def _sync_ddgs_images():
-                with DDGS(proxy=SEARCH_PROXY if SEARCH_PROXY else None) as ddgs:
-                    return list(ddgs.images(query, max_results=max_candidates))
-
-            ddg_items = await asyncio.to_thread(_sync_ddgs_images)
-            for item in ddg_items:
-                url = item.get("image")
-                if url and url.startswith("http"):
-                    candidates.append(url)
-        except Exception as e:
-            logging.warning(f"Ошибка поиска картинок DDG: {e}")
-
-    # 3. Скачиваем первый доступный валидный файл
     async with httpx.AsyncClient(
         headers=headers, timeout=7.0, follow_redirects=True
     ) as client:
-        for url in candidates:
-            try:
-                resp = await client.get(url)
-                if resp.status_code == 200 and len(resp.content) > 2000:
-                    content_type = resp.headers.get("content-type", "").lower()
-                    if "image" in content_type or url.lower().endswith(
-                        (".jpg", ".jpeg", ".png", ".webp")
-                    ):
-                        return resp.content, url
-            except Exception:
-                continue
 
-    return None
+        async def select(urls):
+            for url in urls:
+                if not isinstance(url, str) or not url.startswith(
+                    ("http://", "https://")
+                ):
+                    continue
+                url_key = _pic_url_key(url)
+                if url_key in excluded_urls or url_key in attempted:
+                    continue
+                attempted.add(url_key)
+                try:
+                    resp = await client.get(url)
+                except httpx.HTTPError:
+                    continue
+                if resp.status_code != 200 or len(resp.content) <= 2000:
+                    continue
+                content_type = resp.headers.get("content-type", "").lower()
+                if "image" not in content_type and not url.lower().endswith(
+                    (".jpg", ".jpeg", ".png", ".webp")
+                ):
+                    continue
+                if sha256(resp.content).hexdigest() not in excluded_digests:
+                    return resp.content, url
+            return None
+
+        if SEARCH_ENGINE == "searxng" and SEARXNG_URL:
+            for page in range(1, 3 if history else 2):
+                try:
+                    response = await client.get(
+                        f"{SEARXNG_URL.rstrip('/')}/search",
+                        params={
+                            "q": query,
+                            "categories": "images",
+                            "format": "json",
+                            "pageno": page,
+                        },
+                    )
+                    response.raise_for_status()
+                    items = response.json().get("results", [])[:max_candidates]
+                except (httpx.HTTPError, ValueError) as exc:
+                    logging.warning("Ошибка поиска картинок SearXNG: %s", exc)
+                    break
+                if image := await select(
+                    item.get("img_src") or item.get("url") for item in items
+                ):
+                    return image
+
+        def _sync_ddgs_images():
+            with DDGS(proxy=SEARCH_PROXY or None) as ddgs:
+                limit = max_candidates * (2 if history else 1)
+                return list(ddgs.images(query, max_results=limit))[:limit]
+
+        try:
+            items = await asyncio.to_thread(_sync_ddgs_images)
+        except Exception as exc:
+            logging.warning("Ошибка поиска картинок DDG: %s", exc)
+            return None
+        return await select(item.get("image") for item in items)
 
 
 PONY_TAG_SYNONYMS = {

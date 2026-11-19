@@ -59,6 +59,18 @@ def initialize(conn):
         "CREATE INDEX IF NOT EXISTS idx_booru_recent ON booru_history(chat_id, id DESC)"
     )
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS pic_history (
+            id INTEGER PRIMARY KEY,
+            chat_id INTEGER NOT NULL,
+            query_key TEXT NOT NULL,
+            url_key TEXT NOT NULL,
+            digest TEXT NOT NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_pic_recent ON pic_history(chat_id, id DESC)"
+    )
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS meme_history (
             id INTEGER PRIMARY KEY,
             chat_id INTEGER NOT NULL,
