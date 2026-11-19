@@ -71,6 +71,9 @@ async def confirm_booru(callback: types.CallbackQuery, requests: RequestQueue):
     )
     await callback.answer("Ищу." if queued else "Повтори команду чуть позже.")
     try:
-        await prompt.edit_reply_markup(reply_markup=None)
+        await prompt.delete()
     except TelegramAPIError:
-        pass
+        try:
+            await prompt.edit_reply_markup(reply_markup=None)
+        except TelegramAPIError:
+            pass

@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
+from aiogram.exceptions import TelegramAPIError
+from aiogram.methods import DeleteMessage
 from aiogram.types import Chat, Message, User
 
 from sanya.services import booru, booru_confirmation, chat
@@ -68,7 +70,8 @@ class BooruConfirmationTests(unittest.IsolatedAsyncioTestCase):
         requests = SimpleNamespace(enqueue=AsyncMock(return_value=True))
         with (
             patch.object(booru_confirmation, "_pending", {}),
-            patch.object(Message, "edit_reply_markup", new_callable=AsyncMock),
+            patch.object(Message, "delete", new_callable=AsyncMock) as delete,
+            patch.object(Message, "edit_reply_markup", new_callable=AsyncMock) as edit,
         ):
             await booru_confirmation.ask_booru_confirmation(message, "cat, solo")
             button = message.reply.call_args.kwargs["reply_markup"].inline_keyboard[0][
@@ -93,11 +96,46 @@ class BooruConfirmationTests(unittest.IsolatedAsyncioTestCase):
             ):
                 await booru_confirmation.confirm_booru(callback, requests)
             requests.enqueue.assert_not_called()
+            delete.assert_not_called()
             await booru_confirmation.confirm_booru(callback, requests)
             await booru_confirmation.confirm_booru(callback, requests)
             requests.enqueue.assert_awaited_once_with(
                 message, force_booru_query="cat, solo", booru_confirmed=True
             )
+            delete.assert_awaited_once()
+            edit.assert_not_called()
+
+    async def test_confirmation_removes_button_if_warning_cannot_be_deleted(self):
+        group = Chat(id=-10, type="group")
+        author = User(id=100, is_bot=False, first_name="Author")
+        prompt = Message(message_id=8, date=datetime.now(timezone.utc), chat=group)
+        message = SimpleNamespace(
+            chat=group,
+            from_user=author,
+            sender_chat=None,
+            reply=AsyncMock(return_value=prompt),
+        )
+        requests = SimpleNamespace(enqueue=AsyncMock(return_value=True))
+        error = TelegramAPIError(
+            DeleteMessage(chat_id=group.id, message_id=8), "Denied"
+        )
+        with (
+            patch.object(booru_confirmation, "_pending", {}),
+            patch.object(Message, "delete", AsyncMock(side_effect=error)),
+            patch.object(Message, "edit_reply_markup", new_callable=AsyncMock) as edit,
+        ):
+            await booru_confirmation.ask_booru_confirmation(message, "cat, solo")
+            button = message.reply.await_args.kwargs["reply_markup"].inline_keyboard[0][
+                0
+            ]
+            callback = SimpleNamespace(
+                data=button.callback_data,
+                message=prompt,
+                from_user=author,
+                answer=AsyncMock(),
+            )
+            await booru_confirmation.confirm_booru(callback, requests)
+            edit.assert_awaited_once_with(reply_markup=None)
 
     async def test_chat_waits_for_confirmation_and_spoils_result(self):
         message = SimpleNamespace(
