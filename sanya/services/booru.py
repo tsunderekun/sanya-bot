@@ -153,9 +153,22 @@ async def resolve_r34_tags(query: str, llm) -> str | None:
             ),
             timeout=12,
         )
-        proposed = json.loads(raw)
     except (asyncio.TimeoutError, ValueError, TypeError):
         return None
+    if not isinstance(raw, str):
+        return None
+    raw = raw.strip()
+    try:
+        proposed = json.loads(raw)
+    except json.JSONDecodeError:
+        # A single bare tag is unambiguous enough to run through the usual checks.
+        proposed = (
+            [raw]
+            if len(raw.split()) <= 4
+            and _MODEL_TAG.fullmatch(raw.lower())
+            and not _PROSE.search(raw)
+            else None
+        )
     if not isinstance(proposed, list) or not 1 <= len(proposed) <= 6:
         return None
     tags = []

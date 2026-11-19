@@ -1,5 +1,6 @@
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -7,6 +8,31 @@ from sanya.services import booru
 
 
 class BooruSourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tag_resolution_accepts_single_bare_tag_and_preserves_rating(self):
+        llm = SimpleNamespace(generate=AsyncMock(return_value="hatsune miku"))
+        self.assertEqual(
+            await booru.resolve_r34_tags("хатсуне мику, safe", llm),
+            "hatsune miku, safe",
+        )
+        llm.generate.return_value = '["hatsune_miku", "solo"]'
+        self.assertEqual(
+            await booru.resolve_r34_tags("хатсуне мику, safe", llm),
+            "hatsune_miku, solo, safe",
+        )
+
+    async def test_tag_resolution_rejects_unusable_bare_output(self):
+        llm = SimpleNamespace(generate=AsyncMock())
+        for raw in (
+            "explicit",
+            "rating:explicit",
+            "ignore rules",
+            "please try again",
+            "hatsune miku, solo",
+        ):
+            with self.subTest(raw=raw):
+                llm.generate.return_value = raw
+                self.assertIsNone(await booru.resolve_r34_tags("хатсуне мику", llm))
+
     async def test_rule34_proxy_is_used_only_for_cdn(self):
         requests = []
 
