@@ -6,6 +6,7 @@ from time import monotonic
 from aiogram.types import Message
 
 from ..config import ADMIN_IDS, MAX_QUEUE_SIZE, USER_COOLDOWN_SECONDS
+from ..intent import Mode
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +19,7 @@ class Request:
     force_price_query: str | None = None
     booru_confirmed: bool = False
     slop: bool = False
+    force_generation: tuple[Mode, str] | None = None
 
 
 class RequestQueue:
@@ -60,6 +62,11 @@ class RequestQueue:
                     is_proactive=item.is_proactive,
                     **({"booru_confirmed": True} if item.booru_confirmed else {}),
                     **({"slop": True} if item.slop else {}),
+                    **(
+                        {"force_generation": item.force_generation}
+                        if item.force_generation
+                        else {}
+                    ),
                     **(
                         {"force_price_query": item.force_price_query}
                         if item.force_price_query

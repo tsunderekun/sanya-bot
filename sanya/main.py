@@ -129,6 +129,8 @@ async def register_commands(bot: Bot):
                 ),
                 BotCommand(command="booru", description="Поиск артов Booru / R34"),
                 BotCommand(command="slop", description="Поиск артов на AIBooru"),
+                BotCommand(command="code", description="Написать код по задаче"),
+                BotCommand(command="prompt", description="Написать промпт для картинки"),
                 BotCommand(
                     command="stickeractivity",
                     description="Частота автоматических стикеров",

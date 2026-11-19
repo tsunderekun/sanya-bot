@@ -3,6 +3,7 @@ import re
 from aiogram import F, Router, types
 from aiogram.filters import Command
 
+from ..intent import Mode
 from ..services.booru_confirmation import PREFIX, confirm_booru
 from ..services.queue import RequestQueue
 from ..services.stickers import try_react_whale
@@ -56,10 +57,28 @@ async def cmd_slop(message: types.Message, requests: RequestQueue):
     await enqueue_command(message, requests, force_booru_query=args, slop=True)
 
 
+async def cmd_code(message: types.Message, requests: RequestQueue):
+    args = command_args(message)
+    if not args:
+        await message.reply("Напиши задачу после команды: /код Python, убрать дубли из списка")
+        return
+    await enqueue_command(message, requests, force_generation=(Mode.CODE, args))
+
+
+async def cmd_prompt(message: types.Message, requests: RequestQueue):
+    args = command_args(message)
+    if not args:
+        await message.reply("Опиши картинку после команды: /промпт пони ждёт трамвай ночью, акварель")
+        return
+    await enqueue_command(message, requests, force_generation=(Mode.PROMPT, args))
+
+
 def make_router() -> Router:
     router = Router(name=__name__)
     router.callback_query.register(confirm_booru, F.data.startswith(PREFIX))
     router.message.register(cmd_slop, Command("slop", "слоп"))
+    router.message.register(cmd_code, Command("code", "код"))
+    router.message.register(cmd_prompt, Command("prompt", "промпт"))
     router.message.register(
         cmd_search,
         Command("search", "s", "поиск", "гугл", "найти", "гугли", "ищи", "с"),

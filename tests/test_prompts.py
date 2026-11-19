@@ -30,6 +30,18 @@ class PromptTests(unittest.TestCase):
         self.assertIn("Покупателю с проблемой отвечай без подкола", detail)
         self.assertIn("Если чинить дороже замены", detail)
 
+    def test_image_prompt_preserves_scene_before_adding_style(self):
+        image_prompt = build_system_prompt(Mode.PROMPT)
+        for requirement in (
+            "что именно делает, где и когда",
+            "предметы, их признаки и связи",
+            "не опускай действие при переводе",
+            "Только после сцены добавь стиль",
+            "Не включай в Negative prompt то, что пользователь хочет видеть",
+        ):
+            self.assertIn(requirement, image_prompt)
+        self.assertNotIn("Только после сцены", build_system_prompt(Mode.CHAT))
+
     def test_budget_retains_history_and_separates_instructions(self):
         system = {
             "role": "system",

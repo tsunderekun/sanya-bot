@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sqlite3
 import tempfile
@@ -222,6 +223,53 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn(retry, system)
                     self.assertNotIn(retry, llm.generate.await_args.args[0][-1]["content"])
                     message.message_id += 1
+
+    async def test_generation_commands_route_in_group_without_other_trigger(self):
+        from sanya.handlers.media import cmd_code, cmd_prompt
+        from sanya.services.queue import RequestQueue
+
+        with tempfile.TemporaryDirectory() as root:
+            async with Database(Path(root) / "commands.db") as db:
+                for mid, handler, command, args, response, expected in (
+                    (1, cmd_code, "/код", "Python: сумма списка", "```python\nprint(sum([1, 2]))\n```", "полный рабочий код"),
+                    (2, cmd_prompt, "/prompt@sanya_bot", "Пони ждёт трамвай", "Positive prompt: pony waiting for a tram\nNegative prompt: blur", "Negative prompt:"),
+                ):
+                    with self.subTest(command=command):
+                        queue = RequestQueue()
+                        message = SimpleNamespace(
+                            from_user=SimpleNamespace(id=91, username="reader"),
+                            chat=SimpleNamespace(id=-22, type="supergroup"),
+                            reply_to_message=None, photo=None, sticker=None,
+                            caption=None, message_id=mid, text=f"{command} {args}", reply=AsyncMock(),
+                        )
+                        bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(id=100, username="sanya_bot")))
+                        llm = SimpleNamespace(generate=AsyncMock(return_value=response))
+                        await handler(message, queue)
+
+                        async def process(**kwargs):
+                            await process_chat_message(bot=bot, db=db, llm=llm, **kwargs)
+
+                        with (
+                            patch("sanya.services.chat.keep_typing", AsyncMock()),
+                            patch("sanya.services.chat.send_burst_messages", AsyncMock(return_value=[mid + 10])) as send,
+                        ):
+                            worker = asyncio.create_task(queue.work(process))
+                            try:
+                                await asyncio.wait_for(queue._queue.join(), 2)
+                            finally:
+                                worker.cancel()
+                                await asyncio.gather(worker, return_exceptions=True)
+                        send.assert_awaited_once()
+                        llm.generate.assert_awaited_once()
+                        self.assertIn(expected, llm.generate.await_args.kwargs["system_prompt"])
+                        current = llm.generate.await_args.args[0][-1]["content"]
+                        self.assertTrue(current.endswith(args))
+                        self.assertNotIn(command, current)
+
+                        message.text = command
+                        await handler(message, queue)
+                        message.reply.assert_awaited_once()
+                        self.assertTrue(queue._queue.empty())
 
     async def test_legacy_migration_and_current_turn_filter(self):
         with tempfile.TemporaryDirectory() as root:

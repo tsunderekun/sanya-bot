@@ -90,6 +90,7 @@ async def process_chat_message(
     force_price_query: str | None = None,
     booru_confirmed: bool = False,
     slop: bool = False,
+    force_generation: tuple[Mode, str] | None = None,
     db: Database,
     llm: Ollama,
 ):
@@ -148,6 +149,7 @@ async def process_chat_message(
         or force_search_query
         or force_image_query
         or force_booru_query
+        or force_generation
     )
     if not should_respond:
         return
@@ -180,6 +182,8 @@ async def process_chat_message(
             rf"(?<!\w)@{re.escape(bot_user.username)}\b", "", clean_text, flags=re.I
         )
     clean_text = clean_text.strip()
+    if force_generation:
+        clean_text = force_generation[1]
 
     # --- 0. Проверка на системные команды ОС и инъекции промптов ---
     if force_search_query and not ENABLE_WEB_SEARCH:
@@ -188,6 +192,8 @@ async def process_chat_message(
     mode = (
         Mode.DETAIL
         if force_search_query
+        else force_generation[0]
+        if force_generation
         else classify_intent(clean_text, reply_quote_prefix)
     )
     if mode not in (Mode.CODE, Mode.PROMPT) and OS_COMMAND_REQUEST_PATTERN.search(
