@@ -18,6 +18,13 @@ INTERNAL_TAG = re.compile(
     r"текущее сообщение|данные из сети|мысли|thinking|analysis)\s*:[^\]\n]*)\]",
     re.I,
 )
+# Strip leaked formatting, including escaped tags, without decoding normal text.
+_TAG_NAME = r"(?:blockquote|b|strong|i|em|u|ins|s|strike|del|a|span|code|pre|br|p|div|tg-spoiler|tg-emoji)"
+_HTML_WRAPPER = re.compile(
+    rf"(?:</?{_TAG_NAME}(?:[ \t]+[^<>\n]*)?[ \t]*/?>|"
+    rf"&lt;/?{_TAG_NAME}(?:[ \t]+(?:(?!&[lg]t;)[^<>\n])*)?[ \t]*/?&gt;)",
+    re.I,
+)
 BRACKETS = str.maketrans("", "", "[]")
 NEGATIVE = re.compile(r"(?im)\bNegative prompt\s*:\s*\S")
 PROMPT_TAIL = re.compile(
@@ -70,6 +77,7 @@ def clean_response(text: str, mode: Mode) -> tuple[str, str | None, bool]:
             body = TEXT_EMOJI.sub("", body)
         if mode in (Mode.CHAT, Mode.DETAIL):
             body = INTERNAL_TAG.sub("", body)
+            body = _HTML_WRAPPER.sub("", body)
             # Keep the actual joke or explanation, not its formatting wrappers.
             body = re.sub(r"\[([^\[\]\n]+)\]\((https?://[^\s)]+)\)", r"\1 (\2)", body)
             body = body.translate(BRACKETS)

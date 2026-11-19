@@ -92,6 +92,21 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(clean_response("[С этим матрасом всё понятно]", Mode.DETAIL)[0], "С этим матрасом всё понятно")
         self.assertEqual(clean_response("[Вымысел из режима рофла]\n[стикер: 😁]", Mode.CHAT)[0], "")
 
+    def test_render_strips_leaked_html_without_touching_code(self):
+        for mode in (Mode.CHAT, Mode.DETAIL):
+            for reply in (
+                "Это база</blockquote>",
+                "<blockquote expandable><b>Это база</b></blockquote>",
+                "Это база&lt;/BLOCKQUOTE&gt;",
+                "Это база<br/>",
+            ):
+                with self.subTest(mode=mode, reply=reply):
+                    clean, _, _ = clean_response(reply, mode)
+                    self.assertEqual(render_messages(clean, detailed=mode is Mode.DETAIL), ["Это база"])
+        self.assertEqual(clean_response("Если x < 5 и y > 2", Mode.DETAIL)[0], "Если x < 5 и y > 2")
+        code = '```html\n<blockquote>Цитата</blockquote>\n```'
+        self.assertEqual(clean_response(code, Mode.CODE)[0], code)
+
     def test_render_bounds_long_chat_replies_without_discarding_them(self):
         text = "Это обычная законченная реплика, в которой больше восьми слов и это нормально."
         self.assertEqual(clean_response(text, Mode.CHAT)[0], text[:-1])
