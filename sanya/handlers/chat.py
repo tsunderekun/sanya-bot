@@ -18,6 +18,7 @@ from ..repository import Repository
 from ..services.queue import RequestQueue
 from ..services.stickers import try_react_whale
 from .memes import maybe_send_horse
+from .vocabulary import dictionary_reply, is_dictionary_reply
 
 
 async def handle_message(
@@ -52,6 +53,9 @@ async def handle_message(
         return
 
     bot_user = await bot.get_me()
+    if is_dictionary_reply(message, bot_user):
+        await dictionary_reply(message, db)
+        return
     is_private = message.chat.type == ChatType.PRIVATE
     is_reply_to_bot = bool(
         message.reply_to_message

@@ -9,7 +9,9 @@ def command_args(message: types.Message) -> str:
     return parts[1].strip() if len(parts) > 1 else ""
 
 
-async def reply_html_lines(message: types.Message, lines: list[str], **kwargs):
+async def reply_html_lines(
+    message: types.Message, lines: list[str], *, last_markup=None, **kwargs
+):
     page = []
     size = 0
     for line in lines:
@@ -27,4 +29,6 @@ async def reply_html_lines(message: types.Message, lines: list[str], **kwargs):
             page.append(line)
             size += length + 1
     if page:
+        if last_markup is not None:
+            kwargs["reply_markup"] = last_markup
         await message.reply("\n".join(page), parse_mode="HTML", **kwargs)

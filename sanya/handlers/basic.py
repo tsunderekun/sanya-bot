@@ -7,13 +7,21 @@ from aiogram.filters import Command
 from ..database import Database
 from ..repository import Repository
 from .access import check_is_admin
-from .command_args import command_args
-from .reply_style import cmd_lore_level, cmd_tone
-from .vocabulary import cmd_vocabulary
+from .command_args import command_args, reply_html_lines
+from .reply_style import (
+    MODE_ARGS,
+    MODE_LABELS,
+    SETTINGS_PREFIX,
+    button,
+    cmd_lore_level,
+    cmd_settings,
+    cmd_tone,
+    show_settings,
+    update_settings,
+)
+from .vocabulary import cmd_vocabulary, dictionary_button
 
 log = logging.getLogger(__name__)
-MODE_LABELS = {"normal": "норм", "rofl": "рофл"}
-MODE_ARGS = {"норм": "normal", "normal": "normal", "рофл": "rofl", "rofl": "rofl"}
 RELEASE_ACK = "reply-mode:seen"
 
 
@@ -21,10 +29,7 @@ async def cmd_reply_mode(message: types.Message, db: Database):
     arg = command_args(message).casefold()
     chat = message.chat
     if not arg:
-        mode = await db.run(Repository.get_chat_reply_mode, chat.id)
-        await message.reply(
-            f"Режим этого чата: {MODE_LABELS[mode]}\n/режим норм или /режим рофл"
-        )
+        await show_settings(message, db, "mode")
         return
     if arg not in MODE_ARGS:
         await message.reply("Выбери /режим норм или /режим рофл")
@@ -48,7 +53,7 @@ async def confirm_release(query: types.CallbackQuery):
     ):
         await query.answer()
         return
-    await query.answer("Вижу, подтверждение принято")
+    await query.answer("Vizhu, podtverzhdenie prinyato")
     await msg.edit_reply_markup(reply_markup=None)
     log.info("Reply mode release acknowledged")
 
@@ -71,6 +76,7 @@ async def cmd_help(message: types.Message):
         "<b>Команды и возможности Сани Пониёба:</b>\n\n"
         "В группе позови «Спермер», тегни <code>@ponyeb228_bot</code> или ответь на сообщение бота. «Саня» и тег живого Сани бота не зовут. В личке пиши как обычно.\n\n"
         "<b>Основные команды:</b>\n"
+        "• <code>/настройки</code> или <code>/settings</code> — меню с кнопками: режим, тон, лор и словарь.\n"
         "• <code>/тон</code> (<code>/tone</code>) и <code>/лор</code> (<code>/lore</code>) — показать уровень; добавь число 0–3, чтобы изменить. 0 — дружелюбно / лор только по запросу, 1 — как раньше, 3 — жёсткий стёб / больше отсылок по теме. Настройки свои в каждом чате, в группе меняют админы.\n"
         "• <code>/словарь</code> или <code>/dict</code> — посмотреть слова. <code>/словарь слово</code> — значение. <code>/словарь добавить слово = значение</code> и <code>/словарь удалить слово</code> — правки словаря этого чата (в группе только админы). Встроенные слова защищены. Не добавляй личные данные.\n"
         "• <code>/режим</code> или <code>/mode</code> — текущий режим; <code>/режим норм</code> или <code>/режим рофл</code> — переключить (в группе только админ).\n"
@@ -116,7 +122,13 @@ async def cmd_help(message: types.Message):
         "• <code>/delstickers &lt;имя&gt;</code> (или <code>/удалитьстикеры</code>) — удалить кастомный стикерпак (для админов)\n"
         "Реакция кита значит «угарнул»."
     )
-    await message.reply(help_text, parse_mode="HTML")
+    await reply_html_lines(
+        message,
+        help_text.splitlines(),
+        last_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[[button("Настройки", "open")]]
+        ),
+    )
 
 
 async def cmd_clear(message: types.Message, db: Database):
@@ -138,11 +150,16 @@ async def cmd_clear(message: types.Message, db: Database):
 def make_router() -> Router:
     router = Router(name=__name__)
     router.message.register(cmd_start, Command("start", "старт"))
+    router.message.register(cmd_settings, Command("settings", "настройки"))
     router.message.register(cmd_reply_mode, Command("mode", "режим"))
     router.message.register(cmd_tone, Command("tone", "тон", "агрессия"))
     router.message.register(cmd_lore_level, Command("lore", "лор"))
     router.message.register(cmd_vocabulary, Command("dict", "словарь"))
     router.callback_query.register(confirm_release, F.data == RELEASE_ACK)
+    router.callback_query.register(
+        dictionary_button, F.data.startswith(SETTINGS_PREFIX + "word:")
+    )
+    router.callback_query.register(update_settings, F.data.startswith(SETTINGS_PREFIX))
     router.message.register(
         cmd_help,
         Command("help", "commands", "хелп", "помощь", "команды", "инфо", "справка"),

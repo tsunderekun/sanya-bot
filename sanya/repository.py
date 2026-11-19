@@ -564,14 +564,17 @@ class Repository:
             ).rowcount
         return "added" if inserted else "exists"
 
-    def delete_chat_word(self, chat_id: int, word: str) -> str:
+    def delete_chat_word(
+        self, chat_id: int, word: str, *, expected_meaning: str | None = None
+    ) -> str:
         word = word_key(word)
         if word in BUILTIN_INDEX:
             return "builtin"
         with self.connection as conn:
             deleted = conn.execute(
-                "DELETE FROM chat_vocabulary WHERE chat_id = ? AND word = ?",
-                (chat_id, word),
+                "DELETE FROM chat_vocabulary WHERE chat_id = ? AND word = ? "
+                "AND (? IS NULL OR meaning = ?)",
+                (chat_id, word, expected_meaning, expected_meaning),
             ).rowcount
         return "deleted" if deleted else "missing"
 
