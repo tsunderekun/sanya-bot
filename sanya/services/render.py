@@ -26,7 +26,13 @@ _HTML_WRAPPER = re.compile(
     re.I,
 )
 BRACKETS = str.maketrans("", "", "[]")
-NEGATIVE = re.compile(r"(?im)\bNegative prompt\s*:\s*\S")
+_PROMPT_LABEL = re.compile(
+    r"^[ \t]*(?:#{1,6}[ \t]+)?\*{0,2}"
+    r"(?:(?P<positive>positive prompt|позитивный промпт|положительный промпт|prompt)"
+    r"|(?P<negative>negative prompt|негативный промпт|отрицательный промпт))"
+    r"[ \t]*\*{0,2}:[ \t]*\*{0,2}[ \t]*",
+    re.I | re.M,
+)
 PROMPT_TAIL = re.compile(
     r"(?im)^\s*(?:negative\s+prompt|steps|sampler|cfg\s+scale)\s*:[\s\S]*"
 )
@@ -52,7 +58,36 @@ def _parts(text: str):
     yield None, text[start:]
 
 
-def clean_response(text: str, mode: Mode) -> tuple[str, str | None, bool]:
+def prompt_sections(text: str) -> dict[str, str]:
+    sections = {}
+    for lang, body in _parts(text):
+        if lang is not None:
+            if lang.lower() == "prompt" and body.strip():
+                sections.setdefault("positive", body.strip())
+            continue
+        body = re.split(r"(?m)^```", body, maxsplit=1)[0]
+        labels = list(_PROMPT_LABEL.finditer(body))
+        for i, label in enumerate(labels):
+            end = labels[i + 1].start() if i + 1 < len(labels) else len(body)
+            content = body[label.end() : end].strip()
+            key = label.lastgroup
+            if key and any(char.isalnum() for char in content):
+                sections.setdefault(key, content)
+    return sections
+
+
+def clean_response(
+    text: str, mode: Mode, *, code_only: bool = False
+) -> tuple[str, str | None, bool]:
+    if mode is Mode.PROMPT:
+        sections = prompt_sections(text)
+        if {"positive", "negative"} <= sections.keys():
+            return (
+                f"```prompt\n{sections['positive']}\n```\nNegative prompt: {sections['negative']}",
+                None,
+                False,
+            )
+        return "", None, False
     emoji = None
     has_sticker = False
 
@@ -68,18 +103,17 @@ def clean_response(text: str, mode: Mode) -> tuple[str, str | None, bool]:
     clean = []
     for lang, body in _parts(text):
         if lang is not None:
-            is_prompt = lang.lower() == "prompt"
-            if (mode is Mode.PROMPT and is_prompt) or (
-                mode is Mode.CODE and not is_prompt
-            ):
+            if mode is Mode.CODE and lang.lower() != "prompt":
                 clean.append(f"```{lang}\n{body}```")
+            continue
+        if mode is Mode.CODE and code_only:
+            clean.append("\n")
             continue
         # Drop a dangling fence and its body, not just the backticks.
         body = re.split(r"(?m)^```", body, maxsplit=1)[0]
         body = MEDIA_TAG.sub(remove_tag, body.replace(r"\r", "").replace(r"\n", "\n"))
-        if mode is not Mode.PROMPT:
-            body = PROMPT_TAIL.sub("", body)
-            body = TEXT_EMOJI.sub("", body)
+        body = PROMPT_TAIL.sub("", body)
+        body = TEXT_EMOJI.sub("", body)
         if mode in (Mode.CHAT, Mode.DETAIL):
             body = INTERNAL_TAG.sub("", body)
             body = _HTML_WRAPPER.sub("", body)
@@ -93,6 +127,8 @@ def clean_response(text: str, mode: Mode) -> tuple[str, str | None, bool]:
         body = re.sub(r"(?m)^\s*#{1,6}\s+", "", body)
         clean.append(re.sub(r"(?m)[.。…]+(?=[ \t]*\r?$)", "", body))
     result = "".join(clean).strip()
+    if mode is Mode.CODE and code_only and len(list(FENCE.finditer(result))) != 1:
+        return "", None, False
     if mode is Mode.CHAT:
         lines = [
             chunk
@@ -110,12 +146,9 @@ def clean_response(text: str, mode: Mode) -> tuple[str, str | None, bool]:
 def valid_output(text: str, mode: Mode) -> bool:
     if mode not in (Mode.CODE, Mode.PROMPT):
         return bool(text)
-    blocks = [(lang, body) for lang, body in _parts(text) if lang is not None]
     if mode is Mode.PROMPT:
-        return any(
-            lang.lower() == "prompt" and body.strip() for lang, body in blocks
-        ) and any(NEGATIVE.search(body) for lang, body in _parts(text) if lang is None)
-    for lang, body in blocks:
+        return {"positive", "negative"} <= prompt_sections(text).keys()
+    for lang, body in _parts(text):
         if (
             not lang
             or not body.strip()

@@ -54,6 +54,7 @@ from .render import (
     SELF_HUMILIATION_CHECK,
     Mode,
     clean_response,
+    prompt_sections,
     valid_output,
 )
 from .sale_reply import grounded_sale_reply
@@ -64,6 +65,12 @@ from .telegram import keep_typing, send_burst_messages
 _NEW_QUESTION = re.compile(
     r"^(?:спермер[\s,:]+)?(?:когда|зачем|почему|сколько|где|куда|что|как|можно ли|стоит ли)\b\s+\S+",
     re.IGNORECASE,
+)
+_CODE_ONLY = re.compile(
+    r"\b(?:только\s+код|без\s+(?:пояснений|вступления|комментариев\s+вне\s+кода)|"
+    r"одним\s+(?:кодовым\s+)?блоком|в\s+одном\s+(?:кодовом\s+)?блоке|"
+    r"(?:just|only)\s+(?:the\s+)?code|(?:one|a single)\s+code\s+block)\b",
+    re.I,
 )
 
 
@@ -637,6 +644,11 @@ async def process_chat_message(
             )
         if is_proactive:
             directives.append("Вступи в разговор, тебя прямо не тегали.")
+        code_only = mode is Mode.CODE and bool(_CODE_ONLY.search(query_text))
+        if code_only:
+            directives.append(
+                "Пользователь просит только код: верни один блок без текста вокруг."
+            )
         system_prompt = build_system_prompt(
             mode,
             query_text,
@@ -674,7 +686,7 @@ async def process_chat_message(
                 system_prompt=system_prompt
                 + ("\n\n" + correction if correction else ""),
             )
-            return (*clean_response(raw, mode), raw)
+            return (*clean_response(raw, mode, code_only=code_only), raw)
 
         search_context = await lookup_snippets(search_query) if search_query else ""
         if force_search_query and not search_context:
@@ -706,12 +718,30 @@ async def process_chat_message(
                 rofl,
                 not raw.strip(),
             )
-            result, emoji, sticker, _ = await generate(
-                search_context,
-                "Соблюди формат и закончи ответ целиком."
-                if mode in (Mode.CODE, Mode.PROMPT)
-                else "Дай законченный ответ без служебных меток.",
-            )
+            if mode is Mode.PROMPT:
+                sections = prompt_sections(raw)
+                missing = [
+                    label
+                    for key, label in (
+                        ("positive", "Positive prompt:"),
+                        ("negative", "Negative prompt:"),
+                    )
+                    if key not in sections
+                ]
+                correction = (
+                    f"Не удалось прочитать: {', '.join(missing)}. "
+                    "Верни обе непустые части целиком: Positive prompt: и Negative prompt:. "
+                    "Начни каждую с новой строки, без блока кода и без вступления."
+                )
+            elif mode is Mode.CODE:
+                correction = (
+                    "Верни весь рабочий код одним закрытым блоком с указанием языка, без текста вокруг."
+                    if code_only
+                    else "Соблюди формат и закончи ответ целиком."
+                )
+            else:
+                correction = "Дай законченный ответ без служебных меток."
+            result, emoji, sticker, _ = await generate(search_context, correction)
         suppress_auto_sticker = bool(
             mode is Mode.CHAT
             and re.search(
@@ -737,7 +767,7 @@ async def process_chat_message(
             suppress_auto_sticker = True
             result = {
                 Mode.CODE: "Скрипт целиком не собрался\nДавай разобьём задачу на части",
-                Mode.PROMPT: "Промпт целиком не собрался\nДавай уточним теги братан",
+                Mode.PROMPT: "Не получилось собрать обе части промпта. Попробуй ещё раз.",
             }.get(mode, CHAT_FALLBACK)
     finally:
         stop_typing.set()

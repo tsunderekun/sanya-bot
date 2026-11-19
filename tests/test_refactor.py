@@ -77,6 +77,28 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(render_messages(chat, detailed=False)), 2)
         self.assertFalse(valid_output("```python\nfor x in:\n```", Mode.CODE))
 
+    def test_render_accepts_labeled_prompt_sections(self):
+        expected = "```prompt\npony, raincoat, tram stop\n```\nNegative prompt: blur, watermark"
+        for reply in (
+            expected,
+            "Positive prompt: pony, raincoat, tram stop\nNegative prompt: blur, watermark",
+            "**Позитивный промпт:**\npony, raincoat, tram stop\n\n### Негативный промпт:\nblur, watermark",
+        ):
+            with self.subTest(reply=reply):
+                clean, _, _ = clean_response(reply, Mode.PROMPT)
+                self.assertEqual(clean, expected)
+                self.assertTrue(valid_output(clean, Mode.PROMPT))
+        for reply in ("Positive prompt: pony", "Positive prompt: pony\nNegative prompt: **", "```prompt\npony\nNegative prompt: blur\n```"):
+            with self.subTest(reply=reply):
+                self.assertFalse(valid_output(clean_response(reply, Mode.PROMPT)[0], Mode.PROMPT))
+
+    def test_code_only_drops_prose_without_rewriting_the_block(self):
+        block = '```python\nprint("Here it is!")\n```'
+        raw = f"Вот держи\n{block}\nНу и всё"
+        self.assertEqual(clean_response(raw, Mode.CODE, code_only=True)[0], block)
+        self.assertIn("Вот держи", clean_response(raw, Mode.CODE)[0])
+        self.assertFalse(clean_response(f"{block}\n{block}", Mode.CODE, code_only=True)[0])
+
     def test_render_splits_slash_separated_chat_replies(self):
         reply = (
             "Райзены норм работают конечно / Зависит от того что ты в них "
@@ -175,12 +197,12 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                 )
                 bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(id=100, username="sanya")),
                                       send_chat_action=AsyncMock())
-                for query, answer in (
-                    ("напиши скрипт для поиска картинок, как это сделать?", "```python\nprint('ok')\n```"),
-                    ("дай промпт для картинки пони, какой лучше?", "```prompt\npony, moon\n```\nNegative prompt: blur"),
+                for query, first, second, answer, retry in (
+                    ("напиши скрипт для поиска картинок одним блоком", "Не понял", "Вот скрипт\n```python\nprint('ok')\n```", "```python\nprint('ok')\n```", "одним закрытым блоком"),
+                    ("дай промпт для картинки пони, какой лучше?", "Positive prompt: pony, moon", "Positive prompt: pony, moon\nNegative prompt: blur", "```prompt\npony, moon\n```\nNegative prompt: blur", "Не удалось прочитать: Negative prompt:"),
                 ):
                     message.text = query
-                    llm = SimpleNamespace(generate=AsyncMock(side_effect=["Хз не шарю", answer]))
+                    llm = SimpleNamespace(generate=AsyncMock(side_effect=[first, second]))
                     with (
                         patch("sanya.services.chat.lookup_snippets", AsyncMock()) as search,
                         patch("sanya.services.chat.search_and_download_image", AsyncMock()) as image_search,
@@ -197,8 +219,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                     system = llm.generate.await_args.kwargs["system_prompt"]
                     expected_format = "Negative prompt:" if "промпт" in query else "полный рабочий код"
                     self.assertIn(expected_format, system)
-                    self.assertIn("Соблюди формат", system)
-                    self.assertNotIn("Соблюди формат", llm.generate.await_args.args[0][-1]["content"])
+                    self.assertIn(retry, system)
+                    self.assertNotIn(retry, llm.generate.await_args.args[0][-1]["content"])
                     message.message_id += 1
 
     async def test_legacy_migration_and_current_turn_filter(self):
