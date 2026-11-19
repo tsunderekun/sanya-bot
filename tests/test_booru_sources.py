@@ -8,6 +8,17 @@ from sanya.services import booru
 
 
 class BooruSourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tag_resolution_splits_subject_from_space_setting(self):
+        llm = SimpleNamespace(generate=AsyncMock())
+        for raw in ("cat in space", '["cat_in_space"]', '["cat", "space"]'):
+            with self.subTest(raw=raw):
+                llm.generate.return_value = raw
+                self.assertEqual(
+                    await booru.resolve_r34_tags("кот в космосе", llm), "cat, space"
+                )
+        llm.generate.return_value = "explicit in space"
+        self.assertIsNone(await booru.resolve_r34_tags("кот в космосе", llm))
+
     async def test_tag_resolution_accepts_single_bare_tag_and_preserves_rating(self):
         llm = SimpleNamespace(generate=AsyncMock(return_value="hatsune miku"))
         self.assertEqual(
