@@ -22,6 +22,8 @@ class PromptTests(unittest.TestCase):
         prompt = build_system_prompt(Mode.PROMPT, "дай промпт для Rainbow Dash")
         self.assertIn("Negative prompt:", prompt)
         self.assertIn("Саня брони", prompt)
+        self.assertIn("Обе части пиши только на английском", prompt)
+        self.assertNotIn("Пиши по-русски", prompt)
         self.assertNotIn("2–4", prompt)
         self.assertIn("2 строки по 3–5 слов", CAPTION_PROMPT)
 

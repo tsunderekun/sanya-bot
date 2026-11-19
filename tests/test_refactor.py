@@ -201,6 +201,8 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                 for query, first, second, answer, retry in (
                     ("напиши скрипт для поиска картинок одним блоком", "Не понял", "Вот скрипт\n```python\nprint('ok')\n```", "```python\nprint('ok')\n```", "одним закрытым блоком"),
                     ("дай промпт для картинки пони, какой лучше?", "Positive prompt: pony, moon", "Positive prompt: pony, moon\nNegative prompt: blur", "```prompt\npony, moon\n```\nNegative prompt: blur", "Не удалось прочитать: Negative prompt:"),
+                    ("дай промпт: пони ждёт трамвай ночью, акварель", "Positive prompt: pony waiting for a tram at night, watercolor\nNegative prompt: blur, размытость", "Positive prompt: pony waiting for a tram at night, watercolor\nNegative prompt: blur", "```prompt\npony waiting for a tram at night, watercolor\n```\nNegative prompt: blur", "Обе части только на английском"),
+                    ("дай промпт: трамвай ночью", "Positive prompt: трамвай ночью\nNegative prompt: blur", "Positive prompt: ночной трамвай\nNegative prompt: blur", "Не получилось собрать обе части промпта на английском. Попробуй ещё раз.", "Обе части только на английском"),
                 ):
                     message.text = query
                     llm = SimpleNamespace(generate=AsyncMock(side_effect=[first, second]))

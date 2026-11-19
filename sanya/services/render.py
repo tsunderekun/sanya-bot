@@ -76,12 +76,21 @@ def prompt_sections(text: str) -> dict[str, str]:
     return sections
 
 
+def english_prompt_sections(sections: dict[str, str]) -> bool:
+    return all(
+        (body := sections.get(key, ""))
+        and re.search(r"[a-zA-Z]", body)
+        and not re.search(r"[^\W\d_a-zA-Z]", body)
+        for key in ("positive", "negative")
+    )
+
+
 def clean_response(
     text: str, mode: Mode, *, code_only: bool = False
 ) -> tuple[str, str | None, bool]:
     if mode is Mode.PROMPT:
         sections = prompt_sections(text)
-        if {"positive", "negative"} <= sections.keys():
+        if english_prompt_sections(sections):
             return (
                 f"```prompt\n{sections['positive']}\n```\nNegative prompt: {sections['negative']}",
                 None,
@@ -147,7 +156,7 @@ def valid_output(text: str, mode: Mode) -> bool:
     if mode not in (Mode.CODE, Mode.PROMPT):
         return bool(text)
     if mode is Mode.PROMPT:
-        return {"positive", "negative"} <= prompt_sections(text).keys()
+        return english_prompt_sections(prompt_sections(text))
     for lang, body in _parts(text):
         if (
             not lang

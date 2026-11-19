@@ -62,6 +62,7 @@ from .render import (
     SELF_HUMILIATION_CHECK,
     Mode,
     clean_response,
+    english_prompt_sections,
     prompt_sections,
     valid_output,
 )
@@ -849,8 +850,9 @@ async def process_chat_message(
                     if key not in sections
                 ]
                 correction = (
-                    f"Не удалось прочитать: {', '.join(missing)}. "
-                    "Верни обе непустые части целиком: Positive prompt: и Negative prompt:. "
+                    (f"Не удалось прочитать: {', '.join(missing)}. " if missing else "")
+                    + "Верни обе непустые части целиком: Positive prompt: и Negative prompt:. "
+                    "Обе части только на английском; переведи описание, не меняя детали. "
                     "Начни каждую с новой строки, без блока кода и без вступления."
                 )
             elif mode is Mode.CODE:
@@ -887,7 +889,7 @@ async def process_chat_message(
             suppress_auto_sticker = True
             result = {
                 Mode.CODE: "Скрипт целиком не собрался\nДавай разобьём задачу на части",
-                Mode.PROMPT: "Не получилось собрать обе части промпта. Попробуй ещё раз.",
+                Mode.PROMPT: "Не получилось собрать обе части промпта на английском. Попробуй ещё раз.",
             }.get(mode, CHAT_FALLBACK)
     finally:
         stop_typing.set()
@@ -954,19 +956,19 @@ async def _process_prompt_idea(message: types.Message, bot: Bot, llm: Ollama):
         )
         raw = await llm.generate(turns, complete=True, system_prompt=system)
         sections = prompt_sections(raw)
-        if not {"positive", "negative"} <= sections.keys() or any(
+        if not english_prompt_sections(sections) or any(
             len(s) > 900 for s in sections.values()
         ):
             raw = await llm.generate(
                 turns,
                 complete=True,
                 system_prompt=system
-                + "\nПовтори: обе секции обязательны, до 900 символов каждая.",
+                + "\nПовтори: обе секции только на английском, до 900 символов каждая.",
             )
             sections = prompt_sections(raw)
         if "positive" in sections and _PROMPT_IDEA_MINOR.search(sections["positive"]):
             sections = {}
-        if not {"positive", "negative"} <= sections.keys() or any(
+        if not english_prompt_sections(sections) or any(
             len(s) > 900 for s in sections.values()
         ):
             await message.reply(
