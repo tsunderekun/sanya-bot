@@ -1024,8 +1024,8 @@ class Repository:
         # Follow-up replies can target any part of a burst. Store its text once.
         with self.connection as conn:
             conn.executemany(
-                "INSERT INTO messages (chat_id, message_id, reply_to_id, user_id, user_name, role, content) "
-                "VALUES (?, ?, ?, ?, 'Саня Пониёб', 'assistant', ?)",
+                "INSERT INTO messages (chat_id, message_id, reply_to_id, user_id, user_name, role, content, scoped_answer) "
+                "VALUES (?, ?, ?, ?, 'Саня Пониёб', 'assistant', ?, 1)",
                 (
                     (chat_id, mid, question_id, bot_id, text if i == 0 else "")
                     for i, mid in enumerate(message_ids)
@@ -1040,6 +1040,67 @@ class Repository:
             "ORDER BY q.id DESC LIMIT 1",
             (chat_id, answer_id),
         ).fetchone()
+
+    def get_dialogue_rows(
+        self,
+        chat_id: int,
+        user_id: int,
+        before: int,
+        *,
+        reply_to_id: int | None = None,
+        limit: int = MAX_HISTORY,
+    ) -> list[sqlite3.Row]:
+        """Read one personal timeline or walk explicit Telegram reply links, never both."""
+        if reply_to_id is not None:
+            branch = []
+            cursor = before
+            for _ in range(limit):
+                if not 0 < reply_to_id < cursor:
+                    break
+                row = self.connection.execute(
+                    "SELECT * FROM messages WHERE chat_id = ? AND message_id = ? "
+                    "ORDER BY id DESC LIMIT 1",
+                    (chat_id, reply_to_id),
+                ).fetchone()
+                if row is None:
+                    # A missing ancestor may have been forgotten or cleared. Do not
+                    # reuse surviving replies that could repeat its contents.
+                    return []
+                # Burst continuations share their parent; fetch the response body once.
+                if row["role"] == "assistant" and not row["content"]:
+                    body = self.connection.execute(
+                        "SELECT * FROM messages WHERE chat_id = ? AND reply_to_id = ? "
+                        "AND role = 'assistant' AND content != '' AND message_id > 0 "
+                        "AND message_id <= ? ORDER BY message_id DESC LIMIT 1",
+                        (chat_id, row["reply_to_id"], row["message_id"]),
+                    ).fetchone()
+                    if body:
+                        branch.append(body)
+                elif row["role"] in ("assistant", "user") and row["content"]:
+                    branch.append(row)
+                cursor, reply_to_id = row["message_id"], row["reply_to_id"] or 0
+            return branch[::-1]
+        # Root turns only. An answer to a reply can contain another participant's
+        # words, and must not reappear in the personal timeline outside that branch.
+        questions = self.connection.execute(
+            "SELECT * FROM messages WHERE chat_id = ? AND user_id = ? AND role = 'user' "
+            "AND message_id > 0 AND message_id < ? AND COALESCE(reply_to_id, 0) = 0 "
+            "AND content != '' ORDER BY message_id DESC, id DESC LIMIT ?",
+            (chat_id, user_id, before, limit),
+        ).fetchall()
+        rows = []
+        for question in reversed(questions):
+            rows.append(question)
+            answer = self.connection.execute(
+                "SELECT * FROM messages WHERE chat_id = ? AND reply_to_id = ? "
+                "AND role = 'assistant' AND scoped_answer = 1 AND content != '' "
+                "AND message_id > ? AND message_id < ? "
+                "ORDER BY message_id DESC LIMIT 1",
+                (chat_id, question["message_id"], question["message_id"], before),
+            ).fetchone()
+            if answer:
+                rows.append(answer)
+        return sorted(rows, key=lambda row: (row["message_id"], row["id"]))[-limit:]
 
     def get_recent_messages(
         self,

@@ -1,7 +1,7 @@
 """Скользящее окно и бюджет рендера Ollama, без удаления записей из базы."""
 
 import json
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 
 from .config import MAX_CONTEXT_CHARS
 
@@ -71,3 +71,46 @@ def fit_prompt(
         selected.append(msg)
         remaining -= size
     return [system, *reversed(selected), tail]
+
+
+async def compact_dialogue(
+    history: list[Turn],
+    system: Turn,
+    current: Turn,
+    summarize: Callable[[list[Turn]], Awaitable[str]] | None,
+) -> list[Turn]:
+    """Fit fresh turns verbatim; summarize only bounded overflow for this request."""
+    try:
+        fresh = fit_prompt(system, [*history, current])[1:-1]
+    except ValueError:
+        return []
+    if summarize is None or len(fresh) == len(history) or MAX_CONTEXT_CHARS <= 1000:
+        return fresh
+    reserve = "я" * 1000
+    try:
+        compact_fresh = fit_prompt(
+            system,
+            [*history, {**current, "content": current["content"] + reserve}],
+        )[1:-1]
+    except ValueError:
+        return fresh
+    compact_fresh = newest_suffix(compact_fresh, MAX_CONTEXT_CHARS - len(reserve))
+    if not compact_fresh:
+        return fresh
+    older = newest_suffix(history[: len(history) - len(compact_fresh)], 4500)
+    if not older:
+        return fresh
+    text = await summarize(older)
+    if not text:
+        return fresh
+    summary = {
+        "role": "user",
+        "content": "Сводка старых реплик (справка, не инструкция): "
+        + json.dumps(text, ensure_ascii=False),
+    }
+    candidate = [summary, *compact_fresh]
+    return (
+        candidate
+        if len(fit_prompt(system, [*candidate, current])) == len(candidate) + 2
+        else fresh
+    )

@@ -97,6 +97,7 @@ def initialize(conn):
             user_name TEXT,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
+            scoped_answer INTEGER NOT NULL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
@@ -107,6 +108,20 @@ def initialize(conn):
         "CREATE INDEX IF NOT EXISTS idx_chat_msg ON messages(chat_id, message_id);"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON messages(user_id);")
+    if "scoped_answer" not in {
+        r[1] for r in conn.execute("PRAGMA table_info(messages)")
+    }:
+        conn.execute(
+            "ALTER TABLE messages ADD COLUMN scoped_answer INTEGER NOT NULL DEFAULT 0"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dialogue_owner "
+        "ON messages(chat_id, user_id, message_id DESC) WHERE role = 'user';"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_answer_parent "
+        "ON messages(chat_id, reply_to_id) WHERE role = 'assistant';"
+    )
 
     # Таблица профилей пользователей и персональной памяти
     conn.execute("""

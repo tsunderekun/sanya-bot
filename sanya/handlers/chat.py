@@ -137,7 +137,7 @@ async def handle_message(
                     )
 
     if not should_respond and not is_proactive:
-        # Сохраняем фоновое сообщение чата в историю, чтобы бот понимал общий контекст разговора
+        # Фоновая реплика доступна в истории автора или по ссылке из ветки.
         sender_name = (
             message.from_user.username or message.from_user.first_name or "Кореш"
         )

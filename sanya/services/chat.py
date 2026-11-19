@@ -29,7 +29,7 @@ from ..intent import (
     suppress_background_reply,
 )
 from ..llm import Ollama
-from ..memory import build_turn
+from ..memory import build_turn, compact_dialogue
 from ..prompts import CAPTION_PROMPT, build_system_prompt
 from ..reply_style import ChatReplySettings
 from ..repository import Repository
@@ -62,10 +62,6 @@ from .search import perform_web_search
 from .stickers import send_sanya_sticker
 from .telegram import keep_typing, send_burst_messages
 
-_NEW_QUESTION = re.compile(
-    r"^(?:спермер[\s,:]+)?(?:когда|зачем|почему|сколько|где|куда|что|как|можно ли|стоит ли)\b\s+\S+",
-    re.IGNORECASE,
-)
 _CODE_ONLY = re.compile(
     r"\b(?:только\s+код|без\s+(?:пояснений|вступления|комментариев\s+вне\s+кода)|"
     r"одним\s+(?:кодовым\s+)?блоком|в\s+одном\s+(?:кодовом\s+)?блоке|"
@@ -512,15 +508,30 @@ async def process_chat_message(
     rofl = plain_chat and settings.mode == "rofl"
     thread = reply_quote_prefix.strip()
     original = ""
+    branch_history = []
+    if reply_to_id is not None and not force_search_query:
+        branch_history = await db.run(
+            Repository.get_dialogue_rows,
+            chat_id,
+            user_id,
+            message.message_id,
+            reply_to_id=reply_to_id,
+        )
     if is_reply_to_bot and not force_search_query:
-        parent = getattr(message.reply_to_message, "reply_to_message", None)
-        original = (parent.text or parent.caption or "") if parent else ""
-        if not original:
-            saved = await db.run(Repository.get_answer_question, chat_id, reply_to_id)
-            if saved:
-                original = saved["content"]
+        thread = ""
+        if branch_history and branch_history[-1]["role"] == "assistant":
+            answer = branch_history.pop()
+            if (
+                branch_history
+                and branch_history[-1]["message_id"] == answer["reply_to_id"]
+            ):
+                original = branch_history.pop()["content"]
+                thread = f"Ответ Сани: {answer['content'][:1200]}"
         if original:
             thread = f"Исходный вопрос: {original[:500]}\n{thread}"
+    elif branch_history and not has_reply_photo and not has_reply_sticker:
+        # The same message is already represented as a full turn in the branch.
+        thread = ""
     await db.run(
         Repository.save_message,
         chat_id,
@@ -665,16 +676,40 @@ async def process_chat_message(
         )
 
         history = []
-        # Grounded lore needs no chat history; deterministic replies skipped this read too.
-        if not lore_question and (
-            is_private or (not thread and not _NEW_QUESTION.match(query_text))
-        ):
-            history, _ = await db.run(
-                Repository.get_recent_messages,
-                chat_id,
-                is_group=not is_private,
-                before_message_id=message.message_id,
-                **({} if is_private else {"limit": 6}),
+        if not lore_question and not force_search_query:
+            rows = branch_history
+            if reply_to_id is None:
+                rows = await db.run(
+                    Repository.get_dialogue_rows, chat_id, user_id, message.message_id
+                )
+            history = [
+                {
+                    "role": row["role"],
+                    "content": (
+                        f"[{row['user_name'] or 'Кореш'}]: {row['content']}"
+                        if not is_private and row["role"] == "user"
+                        else row["content"]
+                    ),
+                }
+                for row in rows
+            ]
+
+        search_context = await lookup_snippets(search_query) if search_query else ""
+        if force_search_query and not search_context:
+            await message.reply(
+                "Поиск ничего не вернул. Попробуй другой запрос или повтори позже."
+            )
+            return
+        if history and plain_chat and not insult:
+            # Reserve room for a retry instruction or extra search snippets.
+            budget_turn = build_turn(
+                current, notes=notes, search=search_context, thread=thread
+            )
+            history = await compact_dialogue(
+                history,
+                {"role": "system", "content": system_prompt + " " * 450},
+                budget_turn,
+                getattr(llm, "summarize_dialogue", None),
             )
 
         async def generate(search: str = "", correction: str = ""):
@@ -694,12 +729,6 @@ async def process_chat_message(
             )
             return (*clean_response(raw, mode, code_only=code_only), raw)
 
-        search_context = await lookup_snippets(search_query) if search_query else ""
-        if force_search_query and not search_context:
-            await message.reply(
-                "Поиск ничего не вернул. Попробуй другой запрос или повтори позже."
-            )
-            return
         result, emoji, sticker, raw = await generate(search_context)
         if (
             can_search
@@ -709,6 +738,7 @@ async def process_chat_message(
             and not image_desc
             and not ocr_text
             and not thread
+            and reply_to_id is None
             and not BANTER_PATTERN.search(query_text)
             and UNCERTAINTY_PATTERN.search(raw)
             and ("?" in query_text or SEARCH_TRIGGER_PATTERN.search(query_text))
