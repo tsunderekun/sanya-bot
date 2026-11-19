@@ -4,6 +4,9 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, patch
 
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+from aiogram.methods import GetChatMember
+
 from sanya.database import Database
 from sanya.handlers.mention_all import _CALL, mention_all
 from sanya.repository import Repository
@@ -22,6 +25,42 @@ class MentionAllTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(_CALL.match(" @ALL сбор"))
         self.assertFalse(_CALL.match("@all123"))
         self.assertFalse(_CALL.match("пример @all"))
+
+    async def test_partial_lookup_tags_only_confirmed_people_and_keeps_cooldown(self):
+        chat = NS(id=-100, type="supergroup")
+        message = NS(
+            chat=chat,
+            from_user=member(1).user,
+            sender_chat=None,
+            forward_origin=None,
+            reply=AsyncMock(),
+        )
+        stale = TelegramBadRequest(
+            GetChatMember(chat_id=chat.id, user_id=3), "PARTICIPANT_ID_INVALID"
+        )
+        limited = TelegramRetryAfter(
+            GetChatMember(chat_id=chat.id, user_id=4), "Flood control", 30
+        )
+        bot = NS(
+            get_chat_administrators=AsyncMock(return_value=[member(1)]),
+            get_chat_member=AsyncMock(
+                side_effect=[member(2), stale, limited, member(5, "left")]
+            ),
+        )
+        db = NS(run=AsyncMock(return_value=[1, 2, 3, 4, 5, 6]))
+        cooldowns = {}
+        with (
+            patch("sanya.handlers.mention_all.monotonic", return_value=100),
+            self.assertLogs("sanya.handlers.mention_all", "WARNING"),
+        ):
+            await mention_all(message, bot, db, cooldowns)
+            self.assertEqual(bot.get_chat_member.await_count, 4)
+            text = message.reply.await_args.args[0]
+            self.assertIn('tg://user?id=2"', text)
+            self.assertEqual(text.count("tg://user?id="), 1)
+            self.assertIn("не всех", text)
+            await mention_all(message, bot, db, cooldowns)
+            self.assertIn("5:00", message.reply.await_args.args[0])
 
     async def test_scope_and_membership_confirmation(self):
         path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "test.db"

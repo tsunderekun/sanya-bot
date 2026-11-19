@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from html import escape
 from math import ceil
@@ -12,6 +13,7 @@ from aiogram.filters import Command
 from ..database import Database
 from ..repository import Repository
 
+log = logging.getLogger(__name__)
 _CALL = re.compile(r"^\s*@all(?=\s|$)", re.I)
 _ADMIN_COOLDOWN = 5 * 60
 _MEMBER_COOLDOWN = 15 * 60
@@ -83,36 +85,53 @@ async def mention_all(
     async def lookup(user_id: int):
         try:
             member = await bot.get_chat_member(chat_id, user_id)
-        except TelegramBadRequest:
-            return None
+        except TelegramBadRequest as exc:
+            reason = exc.message.casefold()
+            if any(
+                msg in reason for msg in ("participant_id_invalid", "user not found")
+            ):
+                return None
+            raise
         return member.user if _is_present(member) and not member.user.is_bot else None
 
-    pending = [uid for uid in ids if uid not in people]
-    try:
-        for start in range(0, len(pending), _LOOKUP_CONCURRENCY):
-            members = await asyncio.gather(
-                *(lookup(uid) for uid in pending[start : start + _LOOKUP_CONCURRENCY]),
-                return_exceptions=True,
-            )
-            for member in members:
-                if isinstance(member, BaseException):
-                    raise member
-                if member:
-                    people[member.id] = member
-    except TelegramAPIError:
-        restore_cooldown()
-        await message.reply("Не получилось проверить участников. Попробуй позже.")
-        return
+    caller_id = author.id if author else None
+    pending = [uid for uid in ids if uid not in people and uid != caller_id]
+    incomplete = False
+    for start in range(0, len(pending), _LOOKUP_CONCURRENCY):
+        members = await asyncio.gather(
+            *(lookup(uid) for uid in pending[start : start + _LOOKUP_CONCURRENCY]),
+            return_exceptions=True,
+        )
+        for member in members:
+            if isinstance(member, TelegramAPIError):
+                if not incomplete:
+                    log.warning(
+                        "@all member lookup interrupted: %s", type(member).__name__
+                    )
+                incomplete = True
+            elif isinstance(member, BaseException):
+                raise member
+            elif member:
+                people[member.id] = member
+        if incomplete:
+            break
 
     if author:
         people.pop(author.id, None)
     if not people:
         restore_cooldown()
-        await message.reply("Не нашёл других известных участников этой группы.")
+        await message.reply(
+            "Telegram не дал проверить участников, а других подтверждённых нет. "
+            "Если это повторяется, проверь, что бот назначен админом группы."
+            if incomplete
+            else "Не нашёл других известных участников этой группы."
+        )
         return
     mentions = [_mention(user) for user in people.values()]
     for start in range(0, len(mentions), _BATCH_SIZE):
         header = f"Зову известных участников: {len(mentions)}\n" if not start else ""
+        if not start and incomplete:
+            header += "Telegram дал проверить не всех. Зову только подтверждённых.\n"
         await message.reply(
             header + ", ".join(mentions[start : start + _BATCH_SIZE]),
             parse_mode="HTML",
