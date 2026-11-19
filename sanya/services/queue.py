@@ -16,6 +16,7 @@ class Request:
     force_booru_query: str | None = None
     is_proactive: bool = False
     force_price_query: str | None = None
+    booru_confirmed: bool = False
 
 
 class RequestQueue:
@@ -32,7 +33,10 @@ class RequestQueue:
             return False
         uid = message.from_user.id
         now = monotonic()
-        limited = uid not in ADMIN_IDS and not kwargs.get("is_proactive")
+        # A confirmation resumes an already rate-limited request.
+        limited = uid not in ADMIN_IDS and not (
+            kwargs.get("is_proactive") or kwargs.get("booru_confirmed")
+        )
         if (
             limited
             and now - self._last_request.get(uid, float("-inf")) < USER_COOLDOWN_SECONDS
@@ -53,6 +57,7 @@ class RequestQueue:
                     force_image_query=item.force_image_query,
                     force_booru_query=item.force_booru_query,
                     is_proactive=item.is_proactive,
+                    **({"booru_confirmed": True} if item.booru_confirmed else {}),
                     **(
                         {"force_price_query": item.force_price_query}
                         if item.force_price_query

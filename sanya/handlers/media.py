@@ -1,8 +1,9 @@
 import re
 
-from aiogram import Router, types
+from aiogram import F, Router, types
 from aiogram.filters import Command
 
+from ..services.booru_confirmation import PREFIX, confirm_booru
 from ..services.queue import RequestQueue
 from ..services.stickers import try_react_whale
 from .command_args import command_args
@@ -49,6 +50,7 @@ async def cmd_booru(message: types.Message, requests: RequestQueue):
 
 def make_router() -> Router:
     router = Router(name=__name__)
+    router.callback_query.register(confirm_booru, F.data.startswith(PREFIX))
     router.message.register(
         cmd_search,
         Command("search", "s", "поиск", "гугл", "найти", "гугли", "ищи", "с"),

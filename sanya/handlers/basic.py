@@ -83,7 +83,7 @@ async def cmd_help(message: types.Message):
         "• <code>/режим</code> или <code>/mode</code> — текущий режим; <code>/режим норм</code> или <code>/режим рофл</code> — переключить (в группе только админ).\n"
         "• <code>/s &lt;запрос&gt;</code> (или <code>/поиск</code>, <code>/найти</code>, <code>/гугл</code>) — поиск в сети через SearXNG\n"
         "• <code>/pic &lt;запрос&gt;</code> (или <code>/пикча</code>, <code>/картинка</code>, <code>/фото</code>) — найти и закинуть сочную картинку в чат\n"
-        "• <code>/booru &lt;теги через запятую&gt;</code> (или <code>/r34</code>, <code>/derpi</code>, <code>/буру</code>, <code>/р34</code>) — поиск артов. Пони и MLP идут только на Derpibooru, остальные теги — на Gelbooru, Konachan, e621 и Rule34.xxx, если для него настроен ключ.\n"
+        "• <code>/booru &lt;теги через запятую&gt;</code> (или <code>/r34</code>) — поиск артов. Пони и MLP идут только на Derpibooru. Без <code>safe</code> или <code>general</code> бот попросит автора нажать Vizhu и пришлёт результат под спойлером.\n"
         "• <code>/мем</code> или <code>/meme</code> — случайный канальный мем без подписи. На «хорс» иногда прилетает арт.\n"
         "• <code>/precache [канал] [страниц]</code> (или <code>/прекэш</code>) — затянуть пачку мемов из канала в базу, чтобы не повторялись\n"
         "• <code>/железо</code> или <code>/сетап</code> — твоё железо со слов в этом чате. <code>/железо витек</code> — подтверждённый конфиг кента.\n"

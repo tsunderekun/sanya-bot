@@ -32,6 +32,9 @@ _SAFE_RATINGS = {
     "e621": {"s"},
     "Rule34": {"safe", "s", "general", "g"},
 }
+_SAFE = {"safe", "general"}
+_RATING_SYNTAX = r"rating:(general|safe|suggestive|questionable|explicit|semi-grimdark|grimdark|grotesque|g|s|q|e)"
+_RATING_ALIASES = {"g": "general", "s": "safe", "q": "questionable", "e": "explicit"}
 
 
 def _normalize_tag(tag: str) -> str:
@@ -62,12 +65,24 @@ def parse_tags(query: str) -> tuple[list[str], bool]:
         flags=re.IGNORECASE,
     )
     query = re.sub(r"\b(?:booru|r34|rule34|derpi|буру|р34)\b\s*", "", query, flags=re.I)
-    parts = [
-        _normalize_tag(tag)
-        for part in query.casefold().split(",")
-        if (tag := " ".join(part.split()))
-    ]
+    parts = []
+    for part in query.casefold().split(","):
+        tag = " ".join(part.split())
+        rating = re.fullmatch(rf"(?:(.+) )?{_RATING_SYNTAX}", tag)
+        if rating:
+            tag, value = rating.groups()
+            if tag:
+                parts.append(_normalize_tag(tag))
+            parts.append(_RATING_ALIASES.get(value, value))
+        elif tag:
+            parts.append(_normalize_tag(tag))
     return parts, len(parts) == 1
+
+
+def requires_confirmation(query: str) -> bool:
+    tags, _ = parse_tags(query)
+    ratings = _RATINGS.intersection(tags)
+    return not ratings or bool(ratings - _SAFE)
 
 
 def _allowed_url(url: str, source: str) -> bool:
@@ -92,13 +107,29 @@ def _allowed_url(url: str, source: str) -> bool:
 
 
 async def _candidates(
-    client, source: str, tags: list[str], single: bool, page: int, size: int
+    client,
+    source: str,
+    tags: list[str],
+    single: bool,
+    page: int,
+    size: int,
+    *,
+    confirmed: bool = False,
 ):
     ratings = _RATINGS.intersection(tags)
-    safe = not ratings or ratings <= {"safe", "general"}
+    if ratings - _SAFE and not confirmed:
+        return []
+    safe = bool(ratings and ratings <= _SAFE) or not confirmed
     common = [tag for tag in tags if tag not in _RATINGS]
+    if not common:
+        return []
     if source == "Derpibooru":
-        query = common + (["safe"] if safe else sorted(ratings))
+        selected = {"safe"} if safe else ratings
+        query = common + (
+            ["(" + " OR ".join(sorted(selected)) + ")"]
+            if len(selected) > 1
+            else sorted(selected)
+        )
         if single:
             query.append("score.gt:25")
         response = await client.get(
@@ -108,19 +139,33 @@ async def _candidates(
         response.raise_for_status()
         posts = response.json().get("images", [])
     else:
-        if not safe:
-            return []
         # Translate comma-separated tags and enforce the expected rating locally too.
         query = [
             tag.replace(" ", "_") for tag in common if re.fullmatch(r"[\w ()'-]+", tag)
         ]
         if len(query) != len(common):
             return []
-        query.append(
-            {"Gelbooru": "rating:general", "e621": "rating:s"}.get(
-                source, "rating:safe"
-            )
-        )
+        selected = ratings - _SAFE
+        allowed = _SAFE_RATINGS[source] if safe else set()
+        if safe:
+            native = {"Gelbooru": "general", "e621": "s"}.get(source, "safe")
+            if source == "Rule34" and ratings == {"general"}:
+                native, allowed = "general", {"general", "g"}
+            elif source == "Rule34" and ratings == {"safe"}:
+                allowed = {"safe", "s"}
+            query.append(f"rating:{native}")
+        elif ratings:
+            if not selected <= {"questionable", "explicit"}:
+                return []
+            names = {"questionable": "q", "explicit": "e"}
+            allowed = selected | {names[value] for value in selected}
+            if len(selected) == 1 and not ratings & _SAFE:
+                native = next(iter(selected))
+                query.append(
+                    f"rating:{names[native] if source in {'Konachan', 'e621'} else native}"
+                )
+            if ratings & _SAFE:
+                allowed |= _SAFE_RATINGS[source]
         if single:
             query.append("score:>25")
         params = {"tags": " ".join(query), "limit": size}
@@ -132,6 +177,8 @@ async def _candidates(
                 params.update(user_id=RULE34_USER_ID, api_key=RULE34_API_KEY)
             response = await client.get(url, params=params)
             response.raise_for_status()
+            if not response.content.strip():
+                return []
             payload = response.json()
             posts = payload.get("post", []) if isinstance(payload, dict) else payload
         elif source == "e621":
@@ -153,12 +200,12 @@ async def _candidates(
         if not isinstance(post, dict) or not str(post.get("id", "")).isdecimal():
             continue
         if source == "Derpibooru":
-            if safe and "safe" not in (post.get("tags") or []):
+            if selected and not selected.intersection(post.get("tags") or []):
                 continue
             images = post.get("representations") or {}
             url = images.get("large") or images.get("medium") or post.get("view_url")
         else:
-            if post.get("rating") not in _SAFE_RATINGS[source]:
+            if (safe or ratings) and post.get("rating") not in allowed:
                 continue
             if source == "e621":
                 url = (post.get("sample") or {}).get("url") or (
@@ -179,7 +226,7 @@ async def _candidates(
 
 
 async def search_and_download_booru_image(
-    query: str, *, seen: set[str], max_candidates: int = 15
+    query: str, *, seen: set[str], max_candidates: int = 15, confirmed: bool = False
 ):
     tags, single = parse_tags(query)
     if not tags:
@@ -193,7 +240,13 @@ async def search_and_download_booru_image(
         async def fetch(source, page):
             try:
                 return await _candidates(
-                    client, source, tags, single, page, max_candidates
+                    client,
+                    source,
+                    tags,
+                    single,
+                    page,
+                    max_candidates,
+                    confirmed=confirmed,
                 )
             except (httpx.HTTPError, ValueError, TypeError, AttributeError, KeyError):
                 return []

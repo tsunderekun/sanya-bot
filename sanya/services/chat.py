@@ -34,7 +34,12 @@ from ..prompts import CAPTION_PROMPT, build_system_prompt
 from ..reply_style import ChatReplySettings
 from ..repository import Repository
 from ..vocabulary import custom_definition, select_words
-from .booru import SINGLE_TAG_HINT, search_and_download_booru_image
+from .booru import (
+    SINGLE_TAG_HINT,
+    requires_confirmation,
+    search_and_download_booru_image,
+)
+from .booru_confirmation import ask_booru_confirmation
 from .dialogue_notes import dialogue_notes
 from .media import (
     extract_image_query,
@@ -71,6 +76,7 @@ async def process_chat_message(
     is_proactive: bool = False,
     *,
     force_price_query: str | None = None,
+    booru_confirmed: bool = False,
     db: Database,
     llm: Ollama,
 ):
@@ -220,6 +226,11 @@ async def process_chat_message(
 
     # 1.1 Поиск артов на Booru / R34
     if booru_search_query and len(booru_search_query) >= 2:
+        needs_confirmation = requires_confirmation(booru_search_query)
+        if needs_confirmation and not booru_confirmed:
+            if not is_proactive:
+                await ask_booru_confirmation(message, booru_search_query)
+            return
         logging.info(
             f"[{message.chat.id}] Поиск Booru/R34 арта по запросу: '{booru_search_query}'"
         )
@@ -230,7 +241,7 @@ async def process_chat_message(
         try:
             seen = await db.run(Repository.recent_booru_ids, message.chat.id)
             booru_res = await search_and_download_booru_image(
-                booru_search_query, seen=seen
+                booru_search_query, seen=seen, confirmed=booru_confirmed
             )
             if booru_res:
                 img_bytes, _, booru_source, image_id, single_tag = booru_res
@@ -260,6 +271,7 @@ async def process_chat_message(
                             photo=BufferedInputFile(img_bytes, filename="booru.jpg"),
                             caption=html.escape(caption_text),
                             parse_mode="HTML",
+                            has_spoiler=needs_confirmation,
                             reply_to_message_id=message.message_id,
                         )
                     except Exception as ex_rep:
@@ -271,6 +283,7 @@ async def process_chat_message(
                                 ),
                                 caption=html.escape(caption_text),
                                 parse_mode="HTML",
+                                has_spoiler=needs_confirmation,
                             )
                         else:
                             raise
