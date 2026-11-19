@@ -17,6 +17,7 @@ from ..services.render import Mode, clean_response
 from ..services.telegram import keep_typing, send_burst_messages
 from .access import check_is_admin, resolve_target_user
 from .command_args import command_args, reply_html_lines
+from .lore_panel import show_chat_lore_panel, show_kent_panel
 
 
 def parse_positive_ids(text: str) -> list[int]:
@@ -398,6 +399,12 @@ async def cmd_setkent(message: types.Message, db: Database):
 
     caller_id = message.from_user.id if message.from_user else 0
 
+    if not target_id and not raw_args:
+        await show_kent_panel(message, db)
+        return
+    if target_id and not raw_args:
+        await show_kent_panel(message, db, target_id, target_name)
+        return
     if not target_id:
         help_msg = (
             "<b>Как использовать /setkent (или /кент):</b>\n\n"
@@ -767,6 +774,9 @@ async def cmd_kentsummary(message: types.Message, bot: Bot, db: Database, llm: O
 async def cmd_setchat(message: types.Message, db: Database):
     """Команда для добавления/просмотра/удаления лора конфы: /setchat <текст> или /setchat <chat_id> <текст>"""
     raw_args = command_args(message)
+    if not raw_args:
+        await show_chat_lore_panel(message, db)
+        return
     caller_id = message.from_user.id if message.from_user else 0
 
     target_chat_id = message.chat.id

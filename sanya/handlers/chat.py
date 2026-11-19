@@ -17,6 +17,7 @@ from ..observations import message_self_facts
 from ..repository import Repository
 from ..services.queue import RequestQueue
 from ..services.stickers import try_react_whale
+from .lore_panel import is_lore_panel_reply, save_lore_panel_reply
 from .memes import maybe_send_horse
 from .vocabulary import dictionary_reply, is_dictionary_reply
 
@@ -53,6 +54,9 @@ async def handle_message(
         return
 
     bot_user = await bot.get_me()
+    if is_lore_panel_reply(message, bot_user):
+        await save_lore_panel_reply(message, db)
+        return
     if is_dictionary_reply(message, bot_user):
         await dictionary_reply(message, db)
         return

@@ -1,6 +1,6 @@
 from aiogram import types
 from aiogram.enums import ChatType
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 
 from ..database import Database
 from ..reply_style import LORE_LABELS, STICKER_LABELS, TONE_LABELS
@@ -21,6 +21,13 @@ def button(text: str, data: str) -> types.InlineKeyboardButton:
     return types.InlineKeyboardButton(text=text, callback_data=SETTINGS_PREFIX + data)
 
 
+def panel_keyboard(rows):
+    close = types.InlineKeyboardButton(
+        text="Закрыть", callback_data=SETTINGS_PREFIX + "close", style="danger"
+    )
+    return types.InlineKeyboardMarkup(inline_keyboard=[*rows, [close]])
+
+
 async def settings_view(db: Database, chat_id: int, view: str):
     settings = await db.run(Repository.get_chat_reply_settings, chat_id)
     level = settings.sticker_level
@@ -33,8 +40,8 @@ async def settings_view(db: Database, chat_id: int, view: str):
             f"Лор: {settings.style.lore} — {LORE_LABELS[settings.style.lore]}\n"
             f"Автостикеры: {sticker}"
         )
-        return text, types.InlineKeyboardMarkup(
-            inline_keyboard=[
+        return text, panel_keyboard(
+            [
                 [
                     button("Режим", "view:mode"),
                     button("Тон", "view:tone"),
@@ -75,7 +82,7 @@ async def settings_view(db: Database, chat_id: int, view: str):
         )
         rows.append([button("По умолчанию", f"{view}:sticker:default")])
     rows.append([button("Все настройки", "view:all")])
-    return "\n".join(text), types.InlineKeyboardMarkup(inline_keyboard=rows)
+    return "\n".join(text), panel_keyboard(rows)
 
 
 async def show_settings(message: types.Message, db: Database, view: str = "all"):
@@ -95,12 +102,39 @@ async def edit_panel(message: types.Message, text: str, keyboard):
             raise
 
 
+async def close_panel(query: types.CallbackQuery, msg: types.Message):
+    parent = msg.reply_to_message
+    opener = parent.from_user if parent and not parent.sender_chat else None
+    if (
+        msg.chat.type != ChatType.PRIVATE
+        and not (opener and opener.id == query.from_user.id)
+        and not await check_is_admin(msg.chat, query.from_user.id)
+    ):
+        await query.answer("Закрыть меню может его автор или админ.", show_alert=True)
+        return
+    try:
+        if await msg.delete():
+            await query.answer()
+            return
+    except TelegramAPIError:
+        pass
+    try:
+        await edit_panel(msg, "Меню закрыто.", None)
+    except TelegramAPIError:
+        await query.answer("Telegram не дал закрыть меню.", show_alert=True)
+        return
+    await query.answer()
+
+
 async def update_settings(query: types.CallbackQuery, db: Database):
     msg = query.message
     if not isinstance(msg, types.Message):
         await query.answer("Открой /settings заново")
         return
     data = (query.data or "").removeprefix(SETTINGS_PREFIX)
+    if data == "close":
+        await close_panel(query, msg)
+        return
     if data == "open":
         await query.answer()
         await show_settings(msg, db)

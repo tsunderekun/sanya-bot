@@ -8,7 +8,7 @@ from ..repository import Repository
 from ..vocabulary import BUILTIN_INDEX, BUILTIN_WORDS, word_key
 from .access import check_is_admin
 from .command_args import command_args
-from .reply_style import button, edit_panel
+from .reply_style import button, edit_panel, panel_keyboard
 
 HELP = "/словарь добавить слово = значение\n/словарь удалить слово"
 ADD_PROMPT = "Ответь на это сообщение: слово = значение"
@@ -47,7 +47,7 @@ async def dictionary_view(db: Database, chat_id: int, page: int):
             [button("Все настройки", "view:all")],
         ]
     )
-    return "\n".join(lines), types.InlineKeyboardMarkup(inline_keyboard=buttons)
+    return "\n".join(lines), panel_keyboard(buttons)
 
 
 def _word_id(row):
@@ -94,7 +94,7 @@ async def dictionary_button(query: types.CallbackQuery, db: Database):
             else "Добавленных слов пока нет."
         )
         await query.answer()
-        keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
+        keyboard = panel_keyboard(buttons)
         await edit_panel(msg, text, keyboard)
         return
     row = next((r for r in rows if _word_id(r) == value), None)
@@ -105,8 +105,8 @@ async def dictionary_button(query: types.CallbackQuery, db: Database):
         return
     if action == "pick":
         await query.answer()
-        keyboard = types.InlineKeyboardMarkup(
-            inline_keyboard=[
+        keyboard = panel_keyboard(
+            [
                 [
                     button("Удалить", f"word:confirm:{value}"),
                     button("Отмена", "word:page:0"),
@@ -126,9 +126,7 @@ async def dictionary_button(query: types.CallbackQuery, db: Database):
     await query.answer("Удалено" if removed == "deleted" else "Запись уже изменилась")
     await msg.edit_text(
         "Слово удалено." if removed == "deleted" else "Запись уже изменилась.",
-        reply_markup=types.InlineKeyboardMarkup(
-            inline_keyboard=[[button("Словарь", "dict")]]
-        ),
+        reply_markup=panel_keyboard([[button("Словарь", "dict")]]),
     )
 
 

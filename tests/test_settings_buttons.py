@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import DeleteMessage
 from aiogram.types import Chat, Message, User
 
 from sanya.database import Database
@@ -45,6 +47,64 @@ class AutomaticStickerTests(unittest.TestCase):
 
 
 class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_close_panel_only_deletes_the_menu(self):
+        author = User(id=42, is_bot=False, first_name="Test")
+        outsider = User(id=43, is_bot=False, first_name="Other")
+        chat = Chat(id=-100, type="supergroup")
+        now = datetime.now(timezone.utc)
+        parent = Message(message_id=1, date=now, chat=chat, from_user=author)
+        panel = Message(message_id=2, date=now, chat=chat, reply_to_message=parent)
+        query = SimpleNamespace(
+            message=panel, from_user=outsider, data="settings:close", answer=AsyncMock()
+        )
+        with (
+            patch(
+                "sanya.handlers.reply_style.check_is_admin",
+                AsyncMock(return_value=False),
+            ) as admin,
+            patch.object(
+                Message,
+                "delete",
+                autospec=True,
+                side_effect=AsyncMock(return_value=True),
+            ) as delete,
+            patch.object(Message, "edit_text", AsyncMock()) as edit,
+        ):
+            await update_settings(query, None)
+            delete.assert_not_called()
+            self.assertTrue(query.answer.await_args.kwargs["show_alert"])
+            query.from_user = author
+            await update_settings(query, None)
+            delete.assert_called_once_with(panel)
+            edit.assert_not_awaited()
+            admin.assert_awaited_once_with(chat, outsider.id)
+
+    async def test_close_panel_falls_back_to_removing_controls(self):
+        msg = Message(
+            message_id=2,
+            date=datetime.now(timezone.utc),
+            chat=Chat(id=42, type="private"),
+        )
+        query = SimpleNamespace(
+            message=msg,
+            from_user=User(id=42, is_bot=False, first_name="Test"),
+            data="settings:close",
+            answer=AsyncMock(),
+        )
+        error = TelegramBadRequest(
+            method=DeleteMessage(chat_id=42, message_id=2),
+            message="message can't be deleted",
+        )
+        with (
+            patch.object(Message, "delete", AsyncMock(side_effect=error)),
+            patch.object(Message, "edit_text", AsyncMock()) as edit,
+        ):
+            await update_settings(query, None)
+        edit.assert_awaited_once_with(
+            "Меню закрыто.", reply_markup=None, parse_mode=None
+        )
+        query.answer.assert_awaited_once_with()
+
     async def test_command_menus_match_chat_scope(self):
         bot = SimpleNamespace(set_my_commands=AsyncMock())
         await register_commands(bot)
@@ -110,6 +170,9 @@ class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("settings:view:lore", data)
                 self.assertIn("settings:view:sticker", data)
                 self.assertIn("settings:view:tone", data)
+                close = keyboard.inline_keyboard[-1][0]
+                self.assertEqual(close.callback_data, "settings:close")
+                self.assertEqual(close.model_dump()["style"], "danger")
             with (
                 patch.object(Message, "reply", AsyncMock()) as reply,
                 patch.object(Message, "edit_text", AsyncMock()) as edit,
@@ -124,6 +187,12 @@ class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
                     query.data = f"settings:{callback}"
                     await update_settings(query, db)
                     self.assertTrue(edit.await_args.args[0].startswith(heading))
+                    self.assertEqual(
+                        edit.await_args.kwargs["reply_markup"]
+                        .inline_keyboard[-1][0]
+                        .callback_data,
+                        "settings:close",
+                    )
                 reply.assert_not_awaited()
                 self.assertEqual(edit.await_count, 5)
             query.data = "settings:tone:tone:3"

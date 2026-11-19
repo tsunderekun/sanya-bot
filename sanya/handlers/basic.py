@@ -8,6 +8,8 @@ from ..database import Database
 from ..repository import Repository
 from .access import check_is_admin
 from .command_args import command_args, reply_html_lines
+from .lore_panel import PREFIX as LORE_PANEL_PREFIX
+from .lore_panel import lore_panel_button
 from .reply_style import (
     MODE_ARGS,
     MODE_LABELS,
@@ -167,6 +169,9 @@ def make_router() -> Router:
     router.callback_query.register(confirm_release, F.data == RELEASE_ACK)
     router.callback_query.register(
         dictionary_button, F.data.startswith(SETTINGS_PREFIX + "word:")
+    )
+    router.callback_query.register(
+        lore_panel_button, F.data.startswith(LORE_PANEL_PREFIX)
     )
     router.callback_query.register(update_settings, F.data.startswith(SETTINGS_PREFIX))
     router.message.register(
