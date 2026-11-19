@@ -17,6 +17,7 @@ class Request:
     is_proactive: bool = False
     force_price_query: str | None = None
     booru_confirmed: bool = False
+    slop: bool = False
 
 
 class RequestQueue:
@@ -58,6 +59,7 @@ class RequestQueue:
                     force_booru_query=item.force_booru_query,
                     is_proactive=item.is_proactive,
                     **({"booru_confirmed": True} if item.booru_confirmed else {}),
+                    **({"slop": True} if item.slop else {}),
                     **(
                         {"force_price_query": item.force_price_query}
                         if item.force_price_query

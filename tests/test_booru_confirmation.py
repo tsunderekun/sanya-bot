@@ -73,7 +73,9 @@ class BooruConfirmationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(Message, "delete", new_callable=AsyncMock) as delete,
             patch.object(Message, "edit_reply_markup", new_callable=AsyncMock) as edit,
         ):
-            await booru_confirmation.ask_booru_confirmation(message, "cat, solo")
+            await booru_confirmation.ask_booru_confirmation(
+                message, "cat, solo", slop=True
+            )
             button = message.reply.call_args.kwargs["reply_markup"].inline_keyboard[0][
                 0
             ]
@@ -100,7 +102,7 @@ class BooruConfirmationTests(unittest.IsolatedAsyncioTestCase):
             await booru_confirmation.confirm_booru(callback, requests)
             await booru_confirmation.confirm_booru(callback, requests)
             requests.enqueue.assert_awaited_once_with(
-                message, force_booru_query="cat, solo", booru_confirmed=True
+                message, force_booru_query="cat, solo", booru_confirmed=True, slop=True
             )
             delete.assert_awaited_once()
             edit.assert_not_called()

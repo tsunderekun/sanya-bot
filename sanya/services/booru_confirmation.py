@@ -18,12 +18,15 @@ class _Pending:
     prompt_id: int
     query: str
     expires: float
+    slop: bool
 
 
 _pending: dict[str, _Pending] = {}
 
 
-async def ask_booru_confirmation(message: types.Message, query: str):
+async def ask_booru_confirmation(
+    message: types.Message, query: str, *, slop: bool = False
+):
     if not message.from_user or message.sender_chat:
         await message.reply("Подтверди поиск от своего аккаунта, не от имени чата.")
         return
@@ -46,7 +49,7 @@ async def ask_booru_confirmation(message: types.Message, query: str):
             del _pending[old]
     if len(_pending) >= _LIMIT:
         del _pending[next(iter(_pending))]
-    _pending[token] = _Pending(message, prompt.message_id, query, now + _TTL)
+    _pending[token] = _Pending(message, prompt.message_id, query, now + _TTL, slop)
 
 
 async def confirm_booru(callback: types.CallbackQuery, requests: RequestQueue):
@@ -67,7 +70,10 @@ async def confirm_booru(callback: types.CallbackQuery, requests: RequestQueue):
         return
     del _pending[token]
     queued = await requests.enqueue(
-        item.message, force_booru_query=item.query, booru_confirmed=True
+        item.message,
+        force_booru_query=item.query,
+        booru_confirmed=True,
+        **({"slop": True} if item.slop else {}),
     )
     await callback.answer("Ищу." if queued else "Повтори команду чуть позже.")
     try:

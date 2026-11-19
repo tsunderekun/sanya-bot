@@ -3,7 +3,7 @@ from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramBadRequest
 
 from ..database import Database
-from ..reply_style import LORE_LABELS, TONE_LABELS
+from ..reply_style import LORE_LABELS, STICKER_LABELS, TONE_LABELS
 from ..repository import Repository
 from .access import check_is_admin
 from .command_args import command_args
@@ -14,7 +14,7 @@ MODE_ARGS = {label: mode for mode, label in MODE_LABELS.items()} | {
 }
 SETTINGS_PREFIX = "settings:"
 LEVELS = {"tone": ("/тон", TONE_LABELS), "lore": ("/лор", LORE_LABELS)}
-VIEWS = {"all", "mode", *LEVELS}
+VIEWS = {"all", "mode", "sticker", *LEVELS}
 
 
 def button(text: str, data: str) -> types.InlineKeyboardButton:
@@ -45,6 +45,18 @@ async def settings_view(db: Database, chat_id: int, view: str):
             for i, label in enumerate(labels)
         ]
         rows.extend((choices[:2], choices[2:]))
+    if view in ("all", "sticker"):
+        level = settings.sticker_level
+        text.append(
+            f"Автостикеры: {STICKER_LABELS[level] if level is not None else 'по умолчанию'}"
+        )
+        rows.append(
+            [
+                button(f"{'✓ ' if i == level else ''}{label}", f"{view}:sticker:{i}")
+                for i, label in enumerate(STICKER_LABELS)
+            ]
+        )
+        rows.append([button("По умолчанию", f"{view}:sticker:default")])
     if view == "all":
         rows.append([button("Словарь", "dict")])
     else:
@@ -85,6 +97,7 @@ async def update_settings(query: types.CallbackQuery, db: Database):
     if not (
         (axis == "mode" and value in MODE_LABELS)
         or (axis in LEVELS and value in ("0", "1", "2", "3"))
+        or (axis == "sticker" and value in ("0", "1", "2", "3", "default"))
     ) or view not in ("all", axis):
         await query.answer("Кнопка устарела")
         return
@@ -95,6 +108,12 @@ async def update_settings(query: types.CallbackQuery, db: Database):
         return
     if axis == "mode":
         await db.run(Repository.set_chat_reply_mode, msg.chat.id, value)
+    elif axis == "sticker":
+        await db.run(
+            Repository.set_chat_sticker_level,
+            msg.chat.id,
+            None if value == "default" else int(value),
+        )
     else:
         await db.run(Repository.set_chat_reply_level, msg.chat.id, axis, int(value))
     await query.answer("Сохранено")
@@ -137,3 +156,25 @@ async def cmd_tone(message: types.Message, db: Database):
 
 async def cmd_lore_level(message: types.Message, db: Database):
     await _level(message, db, "lore", "/лор", LORE_LABELS)
+
+
+async def cmd_sticker_activity(message: types.Message, db: Database):
+    arg = command_args(message).casefold()
+    if not arg:
+        await show_settings(message, db, "sticker")
+        return
+    if arg not in ("0", "1", "2", "3", "default"):
+        await message.reply("Укажи 0–3 или default: /автостикеры 0")
+        return
+    if message.chat.type != ChatType.PRIVATE and (
+        not message.from_user
+        or not await check_is_admin(message.chat, message.from_user.id)
+    ):
+        await message.reply("В группе настройки меняют только админы.")
+        return
+    await db.run(
+        Repository.set_chat_sticker_level,
+        message.chat.id,
+        None if arg == "default" else int(arg),
+    )
+    await show_settings(message, db, "sticker")

@@ -67,6 +67,11 @@ _NEW_QUESTION = re.compile(
 )
 
 
+def automatic_sticker(level: int | None, default: float) -> bool:
+    chance = default if level is None else (0.0, 0.1, 0.25, 0.5)[level]
+    return random.random() < chance
+
+
 async def process_chat_message(
     message: types.Message,
     bot: Bot,
@@ -77,6 +82,7 @@ async def process_chat_message(
     *,
     force_price_query: str | None = None,
     booru_confirmed: bool = False,
+    slop: bool = False,
     db: Database,
     llm: Ollama,
 ):
@@ -229,7 +235,9 @@ async def process_chat_message(
         needs_confirmation = requires_confirmation(booru_search_query)
         if needs_confirmation and not booru_confirmed:
             if not is_proactive:
-                await ask_booru_confirmation(message, booru_search_query)
+                await ask_booru_confirmation(
+                    message, booru_search_query, **({"slop": True} if slop else {})
+                )
             return
         logging.info(
             f"[{message.chat.id}] Поиск Booru/R34 арта по запросу: '{booru_search_query}'"
@@ -241,7 +249,10 @@ async def process_chat_message(
         try:
             seen = await db.run(Repository.recent_booru_ids, message.chat.id)
             booru_res = await search_and_download_booru_image(
-                booru_search_query, seen=seen, confirmed=booru_confirmed
+                booru_search_query,
+                seen=seen,
+                confirmed=booru_confirmed,
+                **({"slop": True} if slop else {}),
             )
             if booru_res:
                 img_bytes, _, booru_source, image_id, single_tag = booru_res
@@ -300,7 +311,14 @@ async def process_chat_message(
                         "assistant",
                         f"[Отправил Booru арт '{booru_search_query}'] {caption_text}",
                     )
-                    if pic_has_stk:
+                    if pic_has_stk and automatic_sticker(
+                        (
+                            await db.run(
+                                Repository.get_chat_reply_settings, message.chat.id
+                            )
+                        ).sticker_level,
+                        1.0,
+                    ):
                         await send_sanya_sticker(
                             bot,
                             message.chat.id,
@@ -401,7 +419,14 @@ async def process_chat_message(
                         f"[Отправил картинку '{image_search_query}'] {caption_text}",
                     )
                     # Если модель захотела стикер — отправляем его отдельным стикер-сообщением
-                    if pic_has_stk:
+                    if pic_has_stk and automatic_sticker(
+                        (
+                            await db.run(
+                                Repository.get_chat_reply_settings, message.chat.id
+                            )
+                        ).sticker_level,
+                        1.0,
+                    ):
                         await send_sanya_sticker(
                             bot,
                             message.chat.id,
@@ -713,13 +738,19 @@ async def process_chat_message(
         await asyncio.gather(typing_task, return_exceptions=True)
 
     await send_answer(result, detailed=mode is not Mode.CHAT)
-    if mode is Mode.CHAT and sticker and random.random() < CHAT_STICKER_CHANCE:
-        await send_sanya_sticker(
-            bot,
-            chat_id,
-            emoji=emoji or (message.sticker.emoji if has_sticker else "😁"),
-            db=db,
+    if mode is Mode.CHAT and sticker:
+        sticker_settings = (
+            settings
+            if plain_chat
+            else await db.run(Repository.get_chat_reply_settings, chat_id)
         )
+        if automatic_sticker(sticker_settings.sticker_level, CHAT_STICKER_CHANCE):
+            await send_sanya_sticker(
+                bot,
+                chat_id,
+                emoji=emoji or (message.sticker.emoji if has_sticker else "😁"),
+                db=db,
+            )
 
 
 async def lookup_snippets(query: str) -> str:

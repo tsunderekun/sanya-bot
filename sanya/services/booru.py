@@ -95,6 +95,7 @@ def _allowed_url(url: str, source: str) -> bool:
             "Konachan": "konachan.net",
             "e621": "e621.net",
             "Rule34": "rule34.xxx",
+            "AIBooru": "cdn.aibooru.download",
         }[source]
         return (
             parsed.scheme == "https"
@@ -138,6 +139,32 @@ async def _candidates(
         )
         response.raise_for_status()
         posts = response.json().get("images", [])
+    elif source == "AIBooru":
+        query = [
+            tag.replace(" ", "_")
+            for tag in common
+            if re.fullmatch(r"[\w ()'-]+", tag) and not tag.startswith("-")
+        ]
+        if len(query) != len(common):
+            return []
+        native = {
+            "safe": "g",
+            "general": "g",
+            "suggestive": "s",
+            "questionable": "q",
+            "explicit": "e",
+        }
+        if ratings - native.keys():
+            return []
+        allowed = {"g"} if safe else {native[value] for value in ratings}
+        if len(allowed) == 1:
+            query.append("rating:" + next(iter(allowed)))
+        response = await client.get(
+            "https://aibooru.online/posts.json",
+            params={"tags": " ".join(query), "page": page, "limit": size},
+        )
+        response.raise_for_status()
+        posts = response.json()
     else:
         # Translate comma-separated tags and enforce the expected rating locally too.
         query = [
@@ -207,7 +234,9 @@ async def _candidates(
         else:
             if (safe or ratings) and post.get("rating") not in allowed:
                 continue
-            if source == "e621":
+            if source == "AIBooru":
+                url = post.get("large_file_url") or post.get("file_url")
+            elif source == "e621":
                 url = (post.get("sample") or {}).get("url") or (
                     post.get("file") or {}
                 ).get("url")
@@ -226,7 +255,12 @@ async def _candidates(
 
 
 async def search_and_download_booru_image(
-    query: str, *, seen: set[str], max_candidates: int = 15, confirmed: bool = False
+    query: str,
+    *,
+    seen: set[str],
+    max_candidates: int = 15,
+    confirmed: bool = False,
+    slop: bool = False,
 ):
     tags, single = parse_tags(query)
     if not tags:
@@ -251,7 +285,7 @@ async def search_and_download_booru_image(
             except (httpx.HTTPError, ValueError, TypeError, AttributeError, KeyError):
                 return []
 
-        sources = _sources(tags)
+        sources = ("AIBooru",) if slop else _sources(tags)
         attempted = set(seen)
 
         async def search():

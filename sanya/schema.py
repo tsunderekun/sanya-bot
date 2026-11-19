@@ -3,6 +3,12 @@ from .lore import INITIAL_CHATS_LORE, INITIAL_KENTS_PROFILES
 
 def initialize(conn):
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_sticker_levels (
+            chat_id INTEGER PRIMARY KEY,
+            level INTEGER NOT NULL CHECK (level BETWEEN 0 AND 3)
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS chat_reply_styles (
             chat_id INTEGER PRIMARY KEY,
             tone INTEGER NOT NULL DEFAULT 1 CHECK (tone BETWEEN 0 AND 3),

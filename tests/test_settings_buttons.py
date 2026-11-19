@@ -19,6 +19,28 @@ from sanya.handlers.vocabulary import (
     is_dictionary_reply,
 )
 from sanya.repository import Repository
+from sanya.services.chat import automatic_sticker
+
+
+class AutomaticStickerTests(unittest.TestCase):
+    def test_levels_and_context_default(self):
+        for level, default, threshold in (
+            (0, 1.0, 0.0),
+            (1, 1.0, 0.1),
+            (2, 1.0, 0.25),
+            (3, 1.0, 0.5),
+            (None, 0.2, 0.2),
+            (None, 1.0, 1.0),
+        ):
+            with self.subTest(level=level, default=default):
+                if threshold:
+                    with patch(
+                        "sanya.services.chat.random.random",
+                        return_value=threshold - 0.001,
+                    ):
+                        self.assertTrue(automatic_sticker(level, default))
+                with patch("sanya.services.chat.random.random", return_value=threshold):
+                    self.assertFalse(automatic_sticker(level, default))
 
 
 class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
@@ -54,6 +76,7 @@ class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
                 }
                 self.assertIn("settings:all:mode:rofl", data)
                 self.assertIn("settings:all:lore:0", data)
+                self.assertIn("settings:all:sticker:0", data)
                 self.assertIn(query.data, data)
             with patch(
                 "sanya.handlers.reply_style.check_is_admin",
@@ -78,6 +101,41 @@ class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 (await db.run(Repository.get_chat_reply_settings, -200)).style.tone, 1
             )
+            query.data = "settings:all:sticker:0"
+            with patch(
+                "sanya.handlers.reply_style.check_is_admin",
+                AsyncMock(return_value=False),
+            ):
+                await update_settings(query, db)
+            self.assertIsNone(
+                (await db.run(Repository.get_chat_reply_settings, -100)).sticker_level
+            )
+            with (
+                patch(
+                    "sanya.handlers.reply_style.check_is_admin",
+                    AsyncMock(return_value=True),
+                ),
+                patch.object(Message, "edit_text", AsyncMock()),
+            ):
+                await update_settings(query, db)
+                self.assertEqual(
+                    (
+                        await db.run(Repository.get_chat_reply_settings, -100)
+                    ).sticker_level,
+                    0,
+                )
+                self.assertIsNone(
+                    (
+                        await db.run(Repository.get_chat_reply_settings, -200)
+                    ).sticker_level
+                )
+                query.data = "settings:all:sticker:default"
+                await update_settings(query, db)
+                self.assertIsNone(
+                    (
+                        await db.run(Repository.get_chat_reply_settings, -100)
+                    ).sticker_level
+                )
 
     async def test_dictionary_buttons_and_matching_reply(self):
         path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "test.db"

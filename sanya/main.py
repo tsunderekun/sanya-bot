@@ -105,12 +105,19 @@ async def register_commands(bot: Bot):
         await bot.set_my_commands(
             [
                 BotCommand(command="help", description="Все команды и гайд по лору"),
-                BotCommand(command="all", description="Позвать известных участников группы"),
+                BotCommand(
+                    command="all", description="Позвать известных участников группы"
+                ),
                 BotCommand(command="settings", description="Настройки чата с кнопками"),
                 BotCommand(command="mode", description="Режим чата: норм или рофл"),
-                BotCommand(command="tone", description="Тон чата: дружелюбно или поострее, 0–3"),
+                BotCommand(
+                    command="tone", description="Тон чата: дружелюбно или поострее, 0–3"
+                ),
                 BotCommand(command="lore", description="Частота отсылок к лору, 0–3"),
-                BotCommand(command="dict", description="Словарь конфы: посмотреть, добавить, удалить"),
+                BotCommand(
+                    command="dict",
+                    description="Словарь конфы: посмотреть, добавить, удалить",
+                ),
                 BotCommand(command="pic", description="Найти картинку"),
                 BotCommand(command="meme", description="Случайный канальный мем"),
                 BotCommand(
@@ -121,6 +128,11 @@ async def register_commands(bot: Bot):
                     command="price", description="Прикинуть цену железки по Авито"
                 ),
                 BotCommand(command="booru", description="Поиск артов Booru / R34"),
+                BotCommand(command="slop", description="Поиск артов на AIBooru"),
+                BotCommand(
+                    command="stickeractivity",
+                    description="Частота автоматических стикеров",
+                ),
                 BotCommand(command="s", description="Поиск в интернете"),
                 BotCommand(
                     command="kents", description="Нейро-саммари по кентам конфы"

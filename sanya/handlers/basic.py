@@ -15,6 +15,7 @@ from .reply_style import (
     button,
     cmd_lore_level,
     cmd_settings,
+    cmd_sticker_activity,
     cmd_tone,
     show_settings,
     update_settings,
@@ -85,6 +86,8 @@ async def cmd_help(message: types.Message):
         "• <code>/pic &lt;запрос&gt;</code> (или <code>/пикча</code>, <code>/картинка</code>, <code>/фото</code>) — найти и закинуть сочную картинку в чат\n"
         "• <code>/booru &lt;теги через запятую&gt;</code> (или <code>/r34</code>) — поиск артов. Пони и MLP идут только на Derpibooru. Без <code>safe</code> или <code>general</code> бот попросит автора нажать «Да, я понимаю» и пришлёт результат под спойлером.\n"
         "• <code>/мем</code> или <code>/meme</code> — случайный канальный мем без подписи. На «хорс» иногда прилетает арт.\n"
+        "• <code>/slop landscape, general</code> или <code>/слоп</code> — арты только с AIBooru, с тем же подтверждением, что у /r34.\n"
+        "• <code>/автостикеры</code> или <code>/stickeractivity</code> — частота автоматических стикеров этого чата. Ручной /стикер и кит не меняются.\n"
         "• <code>/precache [канал] [страниц]</code> (или <code>/прекэш</code>) — затянуть пачку мемов из канала в базу, чтобы не повторялись\n"
         "• <code>/железо</code> или <code>/сетап</code> — твоё железо со слов в этом чате. <code>/железо витек</code> — подтверждённый конфиг кента.\n"
         "• <code>/оцени RTX 3070</code> (или <code>/барыга</code>) — ориентир по объявлениям Авито, если их достаточно.\n"
@@ -153,6 +156,9 @@ def make_router() -> Router:
     router = Router(name=__name__)
     router.message.register(cmd_start, Command("start", "старт"))
     router.message.register(cmd_settings, Command("settings", "настройки"))
+    router.message.register(
+        cmd_sticker_activity, Command("stickeractivity", "автостикеры")
+    )
     router.message.register(cmd_reply_mode, Command("mode", "режим"))
     router.message.register(cmd_tone, Command("tone", "тон", "агрессия"))
     router.message.register(cmd_lore_level, Command("lore", "лор"))

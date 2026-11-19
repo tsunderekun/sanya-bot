@@ -48,9 +48,18 @@ async def cmd_booru(message: types.Message, requests: RequestQueue):
     await enqueue_command(message, requests, force_booru_query=args)
 
 
+async def cmd_slop(message: types.Message, requests: RequestQueue):
+    args = command_args(message)
+    if not args:
+        await message.reply("Укажи теги через запятую: /slop landscape, general")
+        return
+    await enqueue_command(message, requests, force_booru_query=args, slop=True)
+
+
 def make_router() -> Router:
     router = Router(name=__name__)
     router.callback_query.register(confirm_booru, F.data.startswith(PREFIX))
+    router.message.register(cmd_slop, Command("slop", "слоп"))
     router.message.register(
         cmd_search,
         Command("search", "s", "поиск", "гугл", "найти", "гугли", "ищи", "с"),

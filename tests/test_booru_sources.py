@@ -7,6 +7,52 @@ from sanya.services import booru
 
 
 class BooruSourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_slop_uses_only_aibooru_and_checks_rating_and_cdn(self):
+        for query, confirmed, suffix, chosen in (
+            ("pony, solo, general", False, " rating:g", 3),
+            ("pony, solo", True, "", 1),
+        ):
+
+            def respond(request):
+                if request.url.host == "aibooru.online":
+                    self.assertEqual(request.url.path, "/posts.json")
+                    self.assertEqual(request.url.params["tags"], "pony solo" + suffix)
+                    return httpx.Response(
+                        200,
+                        json=[
+                            {
+                                "id": 1,
+                                "rating": "q",
+                                "file_url": "https://cdn.aibooru.download/1.jpg",
+                            },
+                            {
+                                "id": 2,
+                                "rating": "g",
+                                "file_url": "https://example.test/2.jpg",
+                            },
+                            {
+                                "id": 3,
+                                "rating": "g",
+                                "large_file_url": "https://cdn.aibooru.download/3.jpg",
+                            },
+                        ],
+                    )
+                self.assertEqual(request.url.host, "cdn.aibooru.download")
+                self.assertEqual(request.url.path, f"/{chosen}.jpg")
+                return httpx.Response(
+                    200, content=b"photo", headers={"Content-Type": "image/jpeg"}
+                )
+
+            client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+            with (
+                patch.object(booru.httpx, "AsyncClient", return_value=client),
+                patch.object(booru.random, "shuffle"),
+            ):
+                result = await booru.search_and_download_booru_image(
+                    query, seen=set(), confirmed=confirmed, slop=True
+                )
+            self.assertEqual(result[2:4], ("AIBooru", f"AIBooru:{chosen}"))
+
     async def test_pony_queries_only_contact_derpibooru(self):
         for query, expected in (
             ("/r34@ponyeb228_bot МЛП, solo", "my little pony"),

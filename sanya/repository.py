@@ -580,13 +580,29 @@ class Repository:
 
     def get_chat_reply_settings(self, chat_id: int) -> ChatReplySettings:
         row = self.connection.execute(
-            "SELECT coalesce(m.mode, 'normal'), coalesce(s.tone, ?), coalesce(s.lore, ?) "
+            "SELECT coalesce(m.mode, 'normal'), coalesce(s.tone, ?), coalesce(s.lore, ?), k.level "
             "FROM (SELECT ? AS chat_id) AS c "
             "LEFT JOIN chat_reply_modes AS m USING (chat_id) "
-            "LEFT JOIN chat_reply_styles AS s USING (chat_id)",
+            "LEFT JOIN chat_reply_styles AS s USING (chat_id) "
+            "LEFT JOIN chat_sticker_levels AS k USING (chat_id)",
             (DEFAULT_LEVEL, DEFAULT_LEVEL, chat_id),
         ).fetchone()
-        return ChatReplySettings(row[0], ReplyStyle(row[1], row[2]))
+        return ChatReplySettings(row[0], ReplyStyle(row[1], row[2]), row[3])
+
+    def set_chat_sticker_level(self, chat_id: int, level: int | None) -> None:
+        with self.connection as conn:
+            if level is None:
+                conn.execute(
+                    "DELETE FROM chat_sticker_levels WHERE chat_id = ?", (chat_id,)
+                )
+            elif type(level) is int and level in range(4):
+                conn.execute(
+                    "INSERT INTO chat_sticker_levels VALUES (?, ?) "
+                    "ON CONFLICT(chat_id) DO UPDATE SET level = excluded.level",
+                    (chat_id, level),
+                )
+            else:
+                raise ValueError("Invalid sticker level")
 
     def set_chat_reply_level(self, chat_id: int, axis: str, level: int) -> None:
         if (
