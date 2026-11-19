@@ -131,7 +131,21 @@ def build_system_prompt(
     rofl: bool = False,
     style: ReplyStyle = ReplyStyle(),
     explicit_lore: bool = False,
+    safe_voice: str = "",
 ) -> str:
+    if safe_voice:
+        return "\n\n".join(
+            filter(
+                None,
+                (
+                    safe_voice,
+                    MODE_PROMPTS[mode]
+                    if mode in (Mode.CODE, Mode.PROMPT)
+                    else "Пиши по-русски, ясно и без вступления.",
+                    *directives,
+                ),
+            )
+        )
     parts = [
         (
             "Ты составляешь текст для генератора изображений. Работай с текущим описанием; "

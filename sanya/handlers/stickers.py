@@ -47,6 +47,9 @@ async def cmd_stickers(message: types.Message, db: Database):
 
 
 async def cmd_sticker(message: types.Message, bot: Bot, db: Database):
+    if await db.run(Repository.get_chat_reply_mode, message.chat.id) == "safe":
+        await message.reply("Отправка стикеров отключена в режиме «сейф».")
+        return
     args = command_args(message)
     target_emoji = args if args else None
     reply_to = (

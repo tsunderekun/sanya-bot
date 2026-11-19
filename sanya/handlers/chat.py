@@ -16,6 +16,7 @@ from ..intent import (
 from ..observations import message_self_facts
 from ..repository import Repository
 from ..services.queue import RequestQueue
+from ..services.safe_mode import safe_mode
 from ..services.stickers import try_react_whale
 from .lore_panel import is_lore_panel_reply, save_lore_panel_reply
 from .memes import maybe_send_horse
@@ -110,20 +111,23 @@ async def handle_message(
     background_blocked = not should_respond and (
         bool(self_facts) or suppress_background_reply(address_text)
     )
+    safe = await safe_mode(db, message.chat.id)
     horse_sent = False
     if (
-        not should_respond
+        not safe
+        and not should_respond
         and not background_blocked
         and message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
     ):
         horse_sent = await maybe_send_horse(message, address_text)
-    if not background_blocked and not self_facts and not horse_sent:
+    if not safe and not background_blocked and not self_facts and not horse_sent:
         await try_react_whale(message)
 
     # Проверка на проактивный ответ Сани на любимые темы (max 3 в час на чат)
     is_proactive = False
     if (
-        not should_respond
+        not safe
+        and not should_respond
         and not background_blocked
         and not horse_sent
         and not is_private

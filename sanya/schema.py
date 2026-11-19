@@ -30,12 +30,24 @@ def initialize(conn):
             PRIMARY KEY (chat_id, word)
         )
     """)
-    conn.execute("""
+    mode_schema = """
         CREATE TABLE IF NOT EXISTS chat_reply_modes (
             chat_id INTEGER PRIMARY KEY,
-            mode TEXT NOT NULL CHECK (mode IN ('normal', 'rofl'))
+            mode TEXT NOT NULL CHECK (mode IN ('normal', 'rofl', 'safe'))
         )
-    """)
+    """
+    mode_table = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'chat_reply_modes'"
+    ).fetchone()
+    if mode_table and "'safe'" not in mode_table[0]:
+        conn.execute("ALTER TABLE chat_reply_modes RENAME TO chat_reply_modes_legacy")
+        conn.execute(mode_schema)
+        conn.execute(
+            "INSERT INTO chat_reply_modes SELECT chat_id, mode FROM chat_reply_modes_legacy"
+        )
+        conn.execute("DROP TABLE chat_reply_modes_legacy")
+    else:
+        conn.execute(mode_schema)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS chat_trigger_phrases (
             chat_id INTEGER NOT NULL,

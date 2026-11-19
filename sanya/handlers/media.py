@@ -12,6 +12,7 @@ from ..services.booru_confirmation import (
     confirm_prompt_idea,
 )
 from ..services.queue import RequestQueue
+from ..services.safe_mode import IDEA_DISABLED, safe_mode
 from ..services.stickers import try_react_whale
 from .command_args import command_args
 
@@ -21,8 +22,9 @@ async def enqueue_command(message: types.Message, requests: RequestQueue, **kwar
         await message.reply("Сейчас не могу принять запрос. Попробуй чуть позже.")
 
 
-async def cmd_search(message: types.Message, requests: RequestQueue):
-    await try_react_whale(message)
+async def cmd_search(message: types.Message, requests: RequestQueue, db=None):
+    if db is None or not await safe_mode(db, message.chat.id):
+        await try_react_whale(message)
     args = command_args(message)
     if not args:
         await message.reply("Напиши че искать то\n/s 4070 авито или /поиск 4070 авито")
@@ -30,8 +32,9 @@ async def cmd_search(message: types.Message, requests: RequestQueue):
     await enqueue_command(message, requests, force_search_query=args)
 
 
-async def cmd_pic(message: types.Message, requests: RequestQueue):
-    await try_react_whale(message)
+async def cmd_pic(message: types.Message, requests: RequestQueue, db=None):
+    if db is None or not await safe_mode(db, message.chat.id):
+        await try_react_whale(message)
     args = command_args(message)
     if not args:
         await message.reply(
@@ -44,8 +47,9 @@ async def cmd_pic(message: types.Message, requests: RequestQueue):
         await enqueue_command(message, requests, force_image_query=args)
 
 
-async def cmd_booru(message: types.Message, requests: RequestQueue):
-    await try_react_whale(message)
+async def cmd_booru(message: types.Message, requests: RequestQueue, db=None):
+    if db is None or not await safe_mode(db, message.chat.id):
+        await try_react_whale(message)
     args = command_args(message)
     if not args:
         await message.reply(
@@ -83,7 +87,10 @@ async def cmd_prompt(message: types.Message, requests: RequestQueue):
     await enqueue_command(message, requests, force_generation=(Mode.PROMPT, args))
 
 
-async def cmd_prompt_idea(message: types.Message):
+async def cmd_prompt_idea(message: types.Message, db=None):
+    if db is not None and await safe_mode(db, message.chat.id):
+        await message.reply(IDEA_DISABLED)
+        return
     await ask_prompt_idea_confirmation(message)
 
 

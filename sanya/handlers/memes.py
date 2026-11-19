@@ -209,6 +209,9 @@ async def cmd_precache(message: types.Message, bot: Bot, db: Database):
 
 async def cmd_meme(message: types.Message, db: Database):
     chat_id = message.chat.id
+    if await db.run(Repository.get_chat_reply_mode, chat_id) == "safe":
+        await message.reply("Случайные мемы отключены в режиме «сейф».")
+        return
     rows = await db.run(Repository.get_channel_memes_with_penalty, chat_id, 8)
     candidates = [
         (

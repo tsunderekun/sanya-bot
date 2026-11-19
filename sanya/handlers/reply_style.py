@@ -9,7 +9,7 @@ from ..trigger_phrases import valid_trigger_phrase
 from .access import check_is_admin
 from .command_args import command_args
 
-MODE_LABELS = {"normal": "норм", "rofl": "рофл"}
+MODE_LABELS = {"normal": "норм", "rofl": "рофл", "safe": "сейф"}
 MODE_ARGS = {label: mode for mode, label in MODE_LABELS.items()} | {
     mode: mode for mode in MODE_LABELS
 }
@@ -82,6 +82,9 @@ async def settings_view(db: Database, chat_id: int, view: str):
     rows = []
     if view == "mode":
         text.append(f"Режим этого чата: {MODE_LABELS[settings.mode]}")
+        text.append(
+            "Сейф: без мата, подколов и фоновых реплик; поиск картинок отключён."
+        )
         rows.append(
             [
                 button(

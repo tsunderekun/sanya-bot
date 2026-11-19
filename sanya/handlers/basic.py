@@ -34,7 +34,7 @@ async def cmd_reply_mode(message: types.Message, db: Database):
         await show_settings(message, db, "mode")
         return
     if arg not in MODE_ARGS:
-        await message.reply("Выбери /режим норм или /режим рофл")
+        await message.reply("Выбери /режим норм, /режим рофл или /режим сейф")
         return
     if chat.type != ChatType.PRIVATE and (
         not message.from_user or not await check_is_admin(chat, message.from_user.id)

@@ -677,6 +677,9 @@ async def cb_restorekents(query: CallbackQuery, db: Database):
 
 async def cmd_kentsummary(message: types.Message, bot: Bot, db: Database, llm: Ollama):
     """Генерирует живое нейро-саммари по всей банде или по конкретному кенту на основе фактов из БД."""
+    if await db.run(Repository.get_chat_reply_mode, message.chat.id) == "safe":
+        await message.reply("Шуточные саммари об участниках отключены в режиме «сейф».")
+        return
     raw_args = command_args(message)
 
     target_id = None
@@ -762,6 +765,8 @@ async def cmd_kentsummary(message: types.Message, bot: Bot, db: Database, llm: O
         stop_typing.set()
         await typing_task
 
+    if await db.run(Repository.get_chat_reply_mode, message.chat.id) == "safe":
+        return
     await send_burst_messages(
         bot,
         message.chat.id,
