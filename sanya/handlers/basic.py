@@ -8,6 +8,7 @@ from ..database import Database
 from ..repository import Repository
 from .access import check_is_admin
 from .command_args import command_args
+from .reply_style import cmd_lore_level, cmd_tone
 from .vocabulary import cmd_vocabulary
 
 log = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ async def cmd_help(message: types.Message):
         "<b>Команды и возможности Сани Пониёба:</b>\n\n"
         "В группе позови «Спермер», тегни <code>@ponyeb228_bot</code> или ответь на сообщение бота. «Саня» и тег живого Сани бота не зовут. В личке пиши как обычно.\n\n"
         "<b>Основные команды:</b>\n"
+        "• <code>/тон</code> (<code>/tone</code>) и <code>/лор</code> (<code>/lore</code>) — показать уровень; добавь число 0–3, чтобы изменить. 0 — дружелюбно / лор только по запросу, 1 — как раньше, 3 — жёсткий стёб / больше отсылок по теме. Настройки свои в каждом чате, в группе меняют админы.\n"
         "• <code>/словарь</code> или <code>/dict</code> — посмотреть слова. <code>/словарь слово</code> — значение. <code>/словарь добавить слово = значение</code> и <code>/словарь удалить слово</code> — правки словаря этого чата (в группе только админы). Встроенные слова защищены. Не добавляй личные данные.\n"
         "• <code>/режим</code> или <code>/mode</code> — текущий режим; <code>/режим норм</code> или <code>/режим рофл</code> — переключить (в группе только админ).\n"
         "• <code>/s &lt;запрос&gt;</code> (или <code>/поиск</code>, <code>/найти</code>, <code>/гугл</code>) — поиск в сети через SearXNG\n"
@@ -137,6 +139,8 @@ def make_router() -> Router:
     router = Router(name=__name__)
     router.message.register(cmd_start, Command("start", "старт"))
     router.message.register(cmd_reply_mode, Command("mode", "режим"))
+    router.message.register(cmd_tone, Command("tone", "тон", "агрессия"))
+    router.message.register(cmd_lore_level, Command("lore", "лор"))
     router.message.register(cmd_vocabulary, Command("dict", "словарь"))
     router.callback_query.register(confirm_release, F.data == RELEASE_ACK)
     router.message.register(

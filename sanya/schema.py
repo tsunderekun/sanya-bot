@@ -3,6 +3,13 @@ from .lore import INITIAL_CHATS_LORE, INITIAL_KENTS_PROFILES
 
 def initialize(conn):
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_reply_styles (
+            chat_id INTEGER PRIMARY KEY,
+            tone INTEGER NOT NULL DEFAULT 1 CHECK (tone BETWEEN 0 AND 3),
+            lore INTEGER NOT NULL DEFAULT 1 CHECK (lore BETWEEN 0 AND 3)
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS chat_vocabulary (
             chat_id INTEGER NOT NULL,
             word TEXT NOT NULL,

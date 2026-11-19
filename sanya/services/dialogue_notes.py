@@ -159,7 +159,15 @@ def _person_note(repo, profile, chat_id, uid, text, *, brief=False):
 
 
 def _collect(
-    repo, uid, chat_id, text, include_kents, reply_user=None, include_notes=True
+    repo,
+    uid,
+    chat_id,
+    text,
+    include_kents,
+    reply_user=None,
+    include_notes=True,
+    *,
+    lore_level=1,
 ):
     if not include_notes:
         return [], False
@@ -192,21 +200,27 @@ def _collect(
 
     overview = bool(include_kents and CHAT_QUESTION.search(text))
     lore_question |= overview or meme_question
-    chat = repo.get_chat_profile(chat_id)
+    chat = (
+        repo.get_chat_profile(chat_id)
+        if lore_level or (include_kents and (direct or overview or meme_question))
+        else None
+    )
     if chat and chat["chat_lore"]:
         if include_kents and (direct or overview or meme_question):
             relevant_lines = _pick_rows(
                 chat["chat_lore"].splitlines(), text, overview=overview
             )
             lore_question |= bool(relevant_lines)
-        else:
+        elif lore_level:
             relevant_lines = [
                 part
                 for part in re.split(r"\n+|(?<=[.!?])\s+", chat["chat_lore"])
                 if relevant(part)
             ]
+        else:
+            relevant_lines = []
         if relevant_lines:
-            budget = 850 if lore_question else 400
+            budget = 850 if lore_question else (0, 400, 550, 700)[lore_level]
             notes.append(f"Лор конфы: {' '.join(relevant_lines)[:budget]}")
     self_facts = repo.get_self_facts(chat_id, uid, 40)
     own_question = re.search(
@@ -242,6 +256,7 @@ async def dialogue_notes(
     *,
     include_kents: bool,
     include_notes: bool = True,
+    lore_level: int = 1,
 ):
     author = getattr(message.reply_to_message, "from_user", None)
     reply_user = author.id if author and not getattr(author, "is_bot", False) else None
@@ -253,4 +268,5 @@ async def dialogue_notes(
         include_kents,
         reply_user,
         include_notes,
+        lore_level=lore_level,
     )

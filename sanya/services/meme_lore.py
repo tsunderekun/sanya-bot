@@ -28,6 +28,10 @@ _MEMES = (
 )
 
 
+def asks_about_lore(text: str) -> bool:
+    return bool(_SHORT_QUESTION.fullmatch(text.strip()) or _LORE_QUESTION.search(text))
+
+
 def meme_lore_reply(text: str) -> str:
     if short := _SHORT_QUESTION.fullmatch(text.strip()):
         text = short[1]

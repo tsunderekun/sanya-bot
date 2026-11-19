@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from .config import MAX_CONTEXT_CHARS, MAX_HISTORY, TOP_STICKERS_CHANCE
 from .lore import DEFAULT_STICKER_PACKS, INITIAL_KENTS_PROFILES
 from .observations import SELF_FACT_PREFIX, self_fact_prefix
+from .reply_style import DEFAULT_LEVEL, ChatReplySettings, ReplyStyle
 from .vocabulary import BUILTIN_INDEX, valid_meaning, valid_word, word_key
 
 
@@ -573,6 +574,30 @@ class Repository:
                 (chat_id, word),
             ).rowcount
         return "deleted" if deleted else "missing"
+
+    def get_chat_reply_settings(self, chat_id: int) -> ChatReplySettings:
+        row = self.connection.execute(
+            "SELECT coalesce(m.mode, 'normal'), coalesce(s.tone, ?), coalesce(s.lore, ?) "
+            "FROM (SELECT ? AS chat_id) AS c "
+            "LEFT JOIN chat_reply_modes AS m USING (chat_id) "
+            "LEFT JOIN chat_reply_styles AS s USING (chat_id)",
+            (DEFAULT_LEVEL, DEFAULT_LEVEL, chat_id),
+        ).fetchone()
+        return ChatReplySettings(row[0], ReplyStyle(row[1], row[2]))
+
+    def set_chat_reply_level(self, chat_id: int, axis: str, level: int) -> None:
+        if (
+            axis not in ("tone", "lore")
+            or type(level) is not int
+            or level not in range(4)
+        ):
+            raise ValueError("Invalid reply style setting")
+        with self.connection as conn:
+            conn.execute(
+                f"INSERT INTO chat_reply_styles (chat_id, {axis}) VALUES (?, ?) "
+                f"ON CONFLICT(chat_id) DO UPDATE SET {axis} = excluded.{axis}",
+                (chat_id, level),
+            )
 
     def get_chat_reply_mode(self, chat_id: int) -> str:
         row = self.connection.execute(
