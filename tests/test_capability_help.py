@@ -106,9 +106,7 @@ class CapabilityHelpTests(unittest.IsolatedAsyncioTestCase):
                     )
                     await process_chat_message(msg, bot, db=db, llm=llm)
                     llm.generate.assert_awaited_once()
-                    self.assertIn(
-                        "включая /r34 и Booru, отключены", send.await_args.args[3]
-                    )
+                    self.assertIn("даже через /r34 или Booru", send.await_args.args[3])
 
                     msg.message_id = 14
                     msg.text = "А как это работает?"
@@ -131,3 +129,28 @@ class CapabilityHelpTests(unittest.IsolatedAsyncioTestCase):
         llm = NS(generate=AsyncMock(return_value=""))
         answer = await generate_help(llm, "Что ты умеешь?", "overview", [], safe=False)
         self.assertIn("/help", answer)
+
+    async def test_safe_follow_up_uses_art_question_in_both_modes(self):
+        llm = NS(generate=AsyncMock())
+        previous = [
+            {"role": "user", "content": "Как пользоваться /r34?"},
+            {"role": "assistant", "content": "Можно искать по тегам"},
+        ]
+        for question in (
+            "А в сейфе?",
+            "А это работает в режиме «сейф»?",
+            "Работает ли /r34 в сейфе?",
+        ):
+            for safe in (False, True):
+                with self.subTest(question=question, safe=safe):
+                    kind = help_kind(question, follow_up=True)
+                    answer = await generate_help(
+                        llm, question, kind, previous, safe=safe
+                    )
+                    self.assertIn(
+                        "искать и отправлять найденные картинки нельзя", answer
+                    )
+                    self.assertIn(
+                        "В этом чате включён" if safe else "Если включить", answer
+                    )
+        llm.generate.assert_not_awaited()

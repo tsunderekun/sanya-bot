@@ -46,6 +46,12 @@ _ART_SEARCH = re.compile(
     r"\b(?:r34|р34|booru|боору|буру|aibooru|пикча|поиск\w* (?:арт\w*|картин\w*))\b"
     r"|/(?:pic|slop|слоп|derpi|дерпи)\b"
 )
+_SAFE_MODE = re.compile(
+    r"\b(?:в\s+(?:режиме\s+)?[«„\"']?сейф(?:е)?|режим\w*\s+[«„\"']?(?:сейф|safe))\b"
+)
+_SAFE_FOLLOW_UP = re.compile(
+    r"(?:а )?(?:это |так )?(?:работает |можно )?в (?:режиме )?[«„\"']?сейф(?:е)?[»“\"']?(?: (?:работает|можно))?"
+)
 
 _FACTS = """Общение: отвечаю на сообщения, помогаю с вопросами, кодом (/код), железом (/железо), даю ориентир цен по объявлениям (/оцени), разбираю присланные фото и скриншоты; OCR зависит от доступности. В группе меня зовут «Спермер», упоминанием бота, ответом на моё сообщение или настроенной фразой; в личке достаточно написать. /help — полная справка по категориям.
 Медиа: /пикча ищет картинки; /booru и /слоп ищут по тегам, /слоп — только на AIBooru. /r34 и /р34 также понимают описание обычной фразой; теги разделяются запятыми. safe и general — фильтры рейтинга бота, не теги сайта. Если нужен допуск к потенциально взрослой выдаче, подтверждает только автор, один раз, за три минуты; результат под спойлером, это не приватность. /мем берёт мем из пула; в группе на «хорс» иногда приходит локальный арт. /стикер отправляет стикер, /стикеры показывает паки.
@@ -71,6 +77,7 @@ def help_kind(text: str, *, follow_up: bool = False) -> str:
         return "feature"
     if follow_up and (
         _FOLLOW_UP.fullmatch(text)
+        or _SAFE_FOLLOW_UP.fullmatch(text)
         or text.startswith("а про ")
         and (_FEATURE.search(text) or _COMMAND.search(text))
         or _QUESTION.match(text)
@@ -104,10 +111,30 @@ def help_context(rows, *, username: str | None) -> list[dict[str, str]]:
 async def generate_help(
     llm, question: str, kind: str, previous: list[dict[str, str]], *, safe: bool
 ) -> str:
-    if safe and kind == "feature" and _ART_SEARCH.search(question.casefold()):
+    text = _normalize(question)
+    # For an elliptical reply, use the nearest actual question, not a model
+    # answer or a topic from earlier in the thread.
+    topic = text
+    if _SAFE_FOLLOW_UP.fullmatch(text):
+        topic = next(
+            (
+                _normalize(turn["content"])
+                for turn in reversed(previous)
+                if turn["role"] == "user"
+                and not _SAFE_FOLLOW_UP.fullmatch(_normalize(turn["content"]))
+            ),
+            "",
+        )
+    if (
+        kind == "feature"
+        and (safe or _SAFE_MODE.search(text))
+        and _ART_SEARCH.search(topic)
+    ):
+        intro = "В этом чате включён «сейф»: " if safe else "Если включить «сейф», "
         return (
-            "В этом чате включён «сейф»: поиск и отправка найденных картинок, "
-            "включая /r34 и Booru, отключены даже с фильтром safe. "
+            intro
+            + "искать и отправлять найденные картинки нельзя, даже через /r34 или Booru "
+            "с фильтром safe. "
             "Для текстового промпта по описанию можно использовать /промпт."
         )
     system = (
