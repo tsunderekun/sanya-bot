@@ -1,5 +1,6 @@
 import html
 import re
+from textwrap import wrap
 
 from ..intent import Mode
 
@@ -12,6 +13,12 @@ EMOJI = re.compile(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\u200D\uFE0F]+")
 TEXT_EMOJI = re.compile(
     r"[#*0-9]\uFE0F?\u20E3|[\U0001F000-\U0001FAFF\u2600-\u2653\u2660-\u27BF\u200D\uFE0F]+"
 )
+INTERNAL_TAG = re.compile(
+    r"\[\s*(?:вымысел из режима рофла|(?:справочные заметки|контекст реплая|"
+    r"текущее сообщение|данные из сети|мысли|thinking|analysis)\s*:[^\]\n]*)\]",
+    re.I,
+)
+BRACKETS = str.maketrans("", "", "[]")
 NEGATIVE = re.compile(r"(?im)\bNegative prompt\s*:\s*\S")
 PROMPT_TAIL = re.compile(
     r"(?im)^\s*(?:negative\s+prompt|steps|sampler|cfg\s+scale)\s*:[\s\S]*"
@@ -21,7 +28,7 @@ SELF_HUMILIATION_CHECK = re.compile(
     r"\b(?:я\s+сос[ау]\w*|сосу\s+(?:хуй|член|соседск\w*)|(?:беру|брал|возьму)\s+в\s+рот|на\s+бутылке\s+сижу|глотаю\s+сперм\w*)\b",
     re.I,
 )
-CHAT_FALLBACK = "Чет мысль не докрутил\nДавай еще разок братан"
+CHAT_FALLBACK = "Чёт ответ не собрался"
 
 
 def _parts(text: str):
@@ -61,24 +68,27 @@ def clean_response(text: str, mode: Mode) -> tuple[str, str | None, bool]:
         if mode is not Mode.PROMPT:
             body = PROMPT_TAIL.sub("", body)
             body = TEXT_EMOJI.sub("", body)
+        if mode in (Mode.CHAT, Mode.DETAIL):
+            body = INTERNAL_TAG.sub("", body)
+            # Keep the actual joke or explanation, not its formatting wrappers.
+            body = re.sub(r"\[([^\[\]\n]+)\]\((https?://[^\s)]+)\)", r"\1 (\2)", body)
+            body = body.translate(BRACKETS)
         body = body.translate(EXCLAMATION)
         body = re.sub(r"(?m)^\s*#{1,6}\s+", "", body)
         clean.append(re.sub(r"(?m)[.。…]+(?=[ \t]*\r?$)", "", body))
     result = "".join(clean).strip()
     if mode is Mode.CHAT:
-        lines = [line.strip() for line in result.splitlines() if line.strip()]
+        lines = [
+            chunk
+            for line in result.splitlines()
+            if any(char.isalnum() for char in line)
+            for chunk in wrap(line.strip(), width=220, break_on_hyphens=False)
+        ]
+        if len(lines) > 4:
+            lines[3] = lines[3][:219].rstrip() + "…"
         lines = [line[0].upper() + line[1:] for line in lines]
         result = "\n".join(lines[:4])
-        if not valid_burst(result):
-            result = ""
     return result, emoji, has_sticker
-
-
-def valid_burst(text: str) -> bool:
-    lines = text.splitlines()
-    return 2 <= len(lines) <= 4 and all(
-        3 <= len(line.split()) <= 8 and len(line) <= 220 for line in lines
-    )
 
 
 def valid_output(text: str, mode: Mode) -> bool:

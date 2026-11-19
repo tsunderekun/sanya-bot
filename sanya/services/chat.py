@@ -603,8 +603,17 @@ async def process_chat_message(
                 search_context = snippets
                 result, emoji, sticker, _ = await generate(search_context)
         if not valid_output(result, mode):
+            logging.info(
+                "Reply render rejected mode=%s rofl=%s empty_raw=%s; retrying",
+                mode.name,
+                rofl,
+                not raw.strip(),
+            )
             result, emoji, sticker, _ = await generate(
-                search_context, "Соблюди формат и закончи ответ целиком."
+                search_context,
+                "Соблюди формат и закончи ответ целиком."
+                if mode in (Mode.CODE, Mode.PROMPT)
+                else "Дай законченный ответ без служебных меток.",
             )
         if mode is Mode.CHAT and re.search(
             r"\b(?:кинь|кидай|кинуть)\s+(?:плотную|зигу|зигулю)\b", query_text, re.I
@@ -613,6 +622,7 @@ async def process_chat_message(
         if mode is Mode.CHAT and SELF_HUMILIATION_CHECK.search(result):
             result = "Че за фимозные фантазии\nСам с ними разбирайся"
         if not valid_output(result, mode):
+            logging.warning("Reply render fallback mode=%s rofl=%s", mode.name, rofl)
             sticker = False
             result = {
                 Mode.CODE: "Скрипт целиком не собрался\nДавай разобьём задачу на части",

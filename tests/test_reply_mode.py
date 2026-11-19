@@ -70,7 +70,7 @@ class ReplyModeTests(unittest.IsolatedAsyncioTestCase):
                 )
                 llm = NS(
                     generate=AsyncMock(
-                        return_value="Жодик уже в космосе торгуется\nТам защеку забрали без кабеля"
+                        return_value="[Вымысел из режима рофла] [Жодик уже в космосе торгуется]"
                     )
                 )
                 await db.run(Repository.set_chat_reply_mode, -100, "rofl")
@@ -78,16 +78,21 @@ class ReplyModeTests(unittest.IsolatedAsyncioTestCase):
                     patch(
                         "sanya.services.chat.send_burst_messages",
                         AsyncMock(return_value=[16]),
-                    ),
+                    ) as send,
                     patch("sanya.services.chat.keep_typing", AsyncMock()),
                 ):
                     await process_chat_message(msg, bot, db=db, llm=llm)
+                llm.generate.assert_awaited_once()
+                self.assertEqual(
+                    send.await_args.args[3], "Жодик уже в космосе торгуется"
+                )
                 self.assertIn(
                     ROFL_PROMPT, llm.generate.await_args.kwargs["system_prompt"]
                 )
                 saved = await db.run(Repository.get_message, -100, 16)
-                self.assertTrue(
-                    saved["content"].startswith("[Вымысел из режима рофла]")
+                self.assertEqual(
+                    saved["content"],
+                    "[Вымысел из режима рофла] Жодик уже в космосе торгуется",
                 )
 
     def test_code_and_plain_prompts_keep_their_contracts(self):

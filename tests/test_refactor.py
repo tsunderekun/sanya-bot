@@ -85,6 +85,20 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(clean_response("Проверь кабель 🔌", Mode.DETAIL)[0], "Проверь кабель")
 
+    def test_render_keeps_short_replies_and_removes_internal_tags(self):
+        reply = "[Вымысел из режима рофла] [жодик ушёл в астрал]\n[Справочные заметки: скрыть]\n[стикер: 😁]"
+        self.assertEqual(clean_response(reply, Mode.CHAT), ("Жодик ушёл в астрал", "😁", True))
+        self.assertEqual(clean_response("Да!", Mode.CHAT)[0], "Да")
+        self.assertEqual(clean_response("[С этим матрасом всё понятно]", Mode.DETAIL)[0], "С этим матрасом всё понятно")
+        self.assertEqual(clean_response("[Вымысел из режима рофла]\n[стикер: 😁]", Mode.CHAT)[0], "")
+
+    def test_render_bounds_long_chat_replies_without_discarding_them(self):
+        text = "Это обычная законченная реплика, в которой больше восьми слов и это нормально."
+        self.assertEqual(clean_response(text, Mode.CHAT)[0], text[:-1])
+        chunks = clean_response((text + " ") * 30, Mode.CHAT)[0].splitlines()
+        self.assertEqual(len(chunks), 4)
+        self.assertTrue(all(len(chunk) <= 220 for chunk in chunks))
+
     def test_intents_and_budget(self):
         for text, quote, mode in (
             ("напиши bash скрипт для поиска картинок", "", Mode.CODE),
