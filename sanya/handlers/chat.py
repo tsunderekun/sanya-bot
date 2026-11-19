@@ -19,6 +19,7 @@ from ..services.queue import RequestQueue
 from ..services.stickers import try_react_whale
 from .lore_panel import is_lore_panel_reply, save_lore_panel_reply
 from .memes import maybe_send_horse
+from .reply_style import is_trigger_panel_reply, save_trigger_panel_reply
 from .vocabulary import dictionary_reply, is_dictionary_reply
 
 
@@ -54,6 +55,9 @@ async def handle_message(
         return
 
     bot_user = await bot.get_me()
+    if is_trigger_panel_reply(message, bot_user):
+        await save_trigger_panel_reply(message, db)
+        return
     if is_lore_panel_reply(message, bot_user):
         await save_lore_panel_reply(message, db)
         return
@@ -74,7 +78,22 @@ async def handle_message(
         message.from_user and message.from_user.id == ORIGINAL_SANYA_ID
     )
 
-    should_respond = is_private or is_reply_to_bot or is_mentioned or is_called_by_name
+    is_custom_trigger = (
+        message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+        and not (is_reply_to_bot or is_mentioned or is_called_by_name)
+        and bool(address_text.strip())
+        and await db.run(
+            Repository.matches_chat_trigger_phrase, message.chat.id, address_text
+        )
+        is True
+    )
+    should_respond = (
+        is_private
+        or is_reply_to_bot
+        or is_mentioned
+        or is_called_by_name
+        or is_custom_trigger
+    )
     self_facts = (
         message_self_facts(message, address_text)
         if message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
@@ -161,7 +180,11 @@ async def handle_message(
         return
 
     # Если обратились к боту или сработал проактивный ответ — ставим в очередь
-    await requests.enqueue(message, is_proactive=is_proactive)
+    await requests.enqueue(
+        message,
+        is_proactive=is_proactive,
+        **({"custom_trigger": True} if is_custom_trigger else {}),
+    )
 
 
 def make_router() -> Router:

@@ -12,7 +12,7 @@ from aiogram.methods import DeleteMessage
 from aiogram.types import Chat, Message, User
 
 from sanya.database import Database
-from sanya.handlers.basic import cmd_help
+from sanya.handlers.help_pages import PAGES, cmd_help, help_page, keyboard
 from sanya.handlers.reply_style import cmd_settings, update_settings
 from sanya.handlers.vocabulary import (
     ADD_PROMPT,
@@ -194,15 +194,36 @@ class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("setkent", admins)
         self.assertTrue(set(group) <= set(admins))
 
-    async def test_help_is_split_and_has_settings_button(self):
+    async def test_help_opens_category_pages_with_settings_navigation(self):
         msg = SimpleNamespace(reply=AsyncMock())
         await cmd_help(msg)
-        self.assertGreater(msg.reply.await_count, 1)
-        for call in msg.reply.await_args_list:
-            plain = unescape(re.sub(r"<[^>]*>", "", call.args[0]))
+        msg.reply.assert_awaited_once()
+        self.assertIn("1/6", msg.reply.await_args.args[0])
+        kb = msg.reply.await_args.kwargs["reply_markup"]
+        self.assertEqual(kb.inline_keyboard[-1][0].callback_data, "settings:open")
+        for key, (text, _) in PAGES.items():
+            plain = unescape(re.sub(r"<[^>]*>", "", text))
             self.assertLessEqual(len(plain.encode("utf-16-le")) // 2, 4096)
-        keyboard = msg.reply.await_args.kwargs["reply_markup"]
-        self.assertEqual(keyboard.inline_keyboard[0][0].callback_data, "settings:open")
+            self.assertIn(
+                f"settings:page:{key}",
+                {b.callback_data for row in keyboard(key).inline_keyboard for b in row},
+            )
+
+    async def test_help_callback_edits_current_message_to_selected_category(self):
+        msg = SimpleNamespace(edit_text=AsyncMock())
+        query = SimpleNamespace(
+            message=msg, data="settings:page:memory", answer=AsyncMock()
+        )
+        await help_page(query)
+        query.answer.assert_awaited_once()
+        msg.edit_text.assert_awaited_once()
+        self.assertIn("Лор и память", msg.edit_text.await_args.args[0])
+        self.assertEqual(
+            msg.edit_text.await_args.kwargs["reply_markup"]
+            .inline_keyboard[-1][0]
+            .callback_data,
+            "settings:open",
+        )
 
     async def test_menu_and_callback_permissions(self):
         path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "test.db"

@@ -198,8 +198,9 @@ async def cmd_precache(message: types.Message, bot: Bot, db: Database):
             bot, db, channel=clean_channel, max_pages=pages
         )
         await status_msg.edit_text(
-            f"Затянул {stats['new']} новых мемов из @{clean_channel} в базу\n"
-            f"Всего в пуле теперь {stats['total']} мемов, повторяться не буду"
+            f"Просмотрел {stats['found']} постов с медиа из @{clean_channel}; "
+            f"новых добавил: {stats['new']}\n"
+            f"Всего в пуле: {stats['total']} мемов. Уже сохранённые посты повторно не добавляю."
         )
     except Exception as e:
         logger.exception("Ошибка прекэша мемов: %s", e)
@@ -210,9 +211,13 @@ async def cmd_meme(message: types.Message, db: Database):
     chat_id = message.chat.id
     rows = await db.run(Repository.get_channel_memes_with_penalty, chat_id, 8)
     candidates = [
-        (row.get("id") if isinstance(row, dict) or hasattr(row, "get") else (row["id"] if "id" in row.keys() else None),
-         row["media_type"],
-         row["file_id"])
+        (
+            row.get("id")
+            if isinstance(row, dict) or hasattr(row, "get")
+            else (row["id"] if "id" in row.keys() else None),
+            row["media_type"],
+            row["file_id"],
+        )
         for row in rows
     ]
     if not candidates:

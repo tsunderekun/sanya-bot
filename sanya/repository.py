@@ -8,6 +8,11 @@ from .config import MAX_CONTEXT_CHARS, MAX_HISTORY, TOP_STICKERS_CHANCE
 from .lore import DEFAULT_STICKER_PACKS, INITIAL_KENTS_PROFILES
 from .observations import SELF_FACT_PREFIX, self_fact_prefix
 from .reply_style import DEFAULT_LEVEL, ChatReplySettings, ReplyStyle
+from .trigger_phrases import (
+    matches_trigger_phrase,
+    normalize_phrase,
+    valid_trigger_phrase,
+)
 from .vocabulary import BUILTIN_INDEX, valid_meaning, valid_word, word_key
 
 
@@ -588,6 +593,49 @@ class Repository:
             (DEFAULT_LEVEL, DEFAULT_LEVEL, chat_id),
         ).fetchone()
         return ChatReplySettings(row[0], ReplyStyle(row[1], row[2]), row[3])
+
+    def get_chat_trigger_phrases(self, chat_id: int):
+        return self.connection.execute(
+            "SELECT rowid AS id, phrase_key, phrase, enabled FROM chat_trigger_phrases "
+            "WHERE chat_id = ? ORDER BY created_at, phrase_key",
+            (chat_id,),
+        ).fetchall()
+
+    def add_chat_trigger_phrase(self, chat_id: int, phrase: str, added_by: int) -> str:
+        phrase = " ".join(phrase.split())
+        if not valid_trigger_phrase(phrase):
+            return "invalid"
+        key = normalize_phrase(phrase)
+        with self.connection as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM chat_trigger_phrases WHERE chat_id = ?",
+                (chat_id,),
+            ).fetchone()[0]
+            if count >= 20:
+                return "limit"
+            inserted = conn.execute(
+                "INSERT INTO chat_trigger_phrases "
+                "(chat_id, phrase_key, phrase, enabled, added_by) VALUES (?, ?, ?, 1, ?) "
+                "ON CONFLICT(chat_id, phrase_key) DO NOTHING",
+                (chat_id, key, phrase, added_by),
+            ).rowcount
+        return "added" if inserted else "exists"
+
+    def toggle_chat_trigger_phrase(self, chat_id: int, phrase_id: int) -> bool:
+        with self.connection as conn:
+            changed = conn.execute(
+                "UPDATE chat_trigger_phrases SET enabled = 1 - enabled "
+                "WHERE chat_id = ? AND rowid = ?",
+                (chat_id, phrase_id),
+            ).rowcount
+        return bool(changed)
+
+    def matches_chat_trigger_phrase(self, chat_id: int, text: str) -> bool:
+        phrases = self.connection.execute(
+            "SELECT phrase FROM chat_trigger_phrases WHERE chat_id = ? AND enabled = 1",
+            (chat_id,),
+        )
+        return any(matches_trigger_phrase(text, row[0]) for row in phrases)
 
     def set_chat_sticker_level(self, chat_id: int, level: int | None) -> None:
         with self.connection as conn:

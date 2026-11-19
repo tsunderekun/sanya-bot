@@ -21,6 +21,7 @@ class Request:
     slop: bool = False
     force_generation: tuple[Mode, str] | None = None
     prompt_idea: bool = False
+    custom_trigger: bool = False
 
 
 class RequestQueue:
@@ -74,6 +75,7 @@ class RequestQueue:
                         else {}
                     ),
                     **({"prompt_idea": True} if item.prompt_idea else {}),
+                    **({"custom_trigger": True} if item.custom_trigger else {}),
                 )
             except Exception:
                 logging.exception("Ошибка обработки сообщения из очереди")

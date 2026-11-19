@@ -5,6 +5,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from ..database import Database
 from ..reply_style import LORE_LABELS, STICKER_LABELS, TONE_LABELS
 from ..repository import Repository
+from ..trigger_phrases import valid_trigger_phrase
 from .access import check_is_admin
 from .command_args import command_args
 
@@ -15,7 +16,8 @@ MODE_ARGS = {label: mode for mode, label in MODE_LABELS.items()} | {
 SETTINGS_PREFIX = "settings:"
 OWNED_CLOSE_PREFIX = SETTINGS_PREFIX + "close:"
 LEVELS = {"tone": ("/тон", TONE_LABELS), "lore": ("/лор", LORE_LABELS)}
-VIEWS = {"all", "mode", "sticker", *LEVELS}
+VIEWS = {"all", "mode", "sticker", "triggers", *LEVELS}
+TRIGGER_HEADING = "Фразы обращения к боту"
 
 
 def button(text: str, data: str) -> types.InlineKeyboardButton:
@@ -69,6 +71,11 @@ async def settings_view(db: Database, chat_id: int, view: str):
                     button("Лор", "view:lore"),
                 ],
                 [button("Автостикеры", "view:sticker"), button("Словарь", "dict")],
+                *(
+                    [[button("Фразы обращения", "view:triggers")]]
+                    if chat_id < 0
+                    else []
+                ),
             ]
         )
     text = []
@@ -102,6 +109,19 @@ async def settings_view(db: Database, chat_id: int, view: str):
             ]
         )
         rows.append([button("По умолчанию", f"{view}:sticker:default")])
+    if view == "triggers":
+        phrases = await db.run(Repository.get_chat_trigger_phrases, chat_id)
+        text.append(
+            TRIGGER_HEADING + "\n"
+            "Ответь на эту панель фразой (2–48 знаков, до 8 слов), чтобы добавить её. "
+            "В группе добавляют только админы. Нажатие включает или выключает фразу."
+        )
+        if not phrases:
+            text.append("Фраз пока нет.")
+        for phrase in phrases:
+            enabled = bool(phrase["enabled"])
+            label = ("✓ " if enabled else "○ ") + phrase["phrase"]
+            rows.append([button(label[:60], f"trigger:toggle:{phrase['id']}")])
     rows.append([button("Все настройки", "view:all")])
     return "\n".join(text), panel_keyboard(rows)
 
@@ -172,6 +192,12 @@ async def update_settings(query: types.CallbackQuery, db: Database):
         return
     navigation = data.removeprefix("view:")
     if data.startswith("view:") and navigation in VIEWS:
+        if navigation == "triggers" and msg.chat.type not in (
+            ChatType.GROUP,
+            ChatType.SUPERGROUP,
+        ):
+            await query.answer("Фразы настраиваются в группе.")
+            return
         await query.answer()
         await edit_panel(msg, *await settings_view(db, msg.chat.id, navigation))
         return
@@ -184,6 +210,25 @@ async def update_settings(query: types.CallbackQuery, db: Database):
             return
         await query.answer()
         await edit_panel(msg, *await dictionary_view(db, msg.chat.id, int(page)))
+        return
+    if data.startswith("trigger:toggle:"):
+        raw_id = data.removeprefix("trigger:toggle:")
+        if not raw_id.isascii() or not raw_id.isdecimal() or len(raw_id) > 12:
+            await query.answer("Кнопка устарела")
+            return
+        if msg.chat.type not in (
+            ChatType.GROUP,
+            ChatType.SUPERGROUP,
+        ) or not await check_is_admin(msg.chat, query.from_user.id):
+            await query.answer("В группе фразы меняют только админы", show_alert=True)
+            return
+        if not await db.run(
+            Repository.toggle_chat_trigger_phrase, msg.chat.id, int(raw_id)
+        ):
+            await query.answer("Фраза уже удалена")
+            return
+        await query.answer("Сохранено")
+        await edit_panel(msg, *await settings_view(db, msg.chat.id, "triggers"))
         return
     parts = data.split(":")
     if len(parts) != 3 or parts[0] not in VIEWS:
@@ -214,6 +259,54 @@ async def update_settings(query: types.CallbackQuery, db: Database):
         await db.run(Repository.set_chat_reply_level, msg.chat.id, axis, int(value))
     await query.answer("Сохранено")
     await edit_panel(msg, *await settings_view(db, msg.chat.id, view))
+
+
+def is_trigger_panel_reply(message: types.Message, bot: types.User) -> bool:
+    panel = message.reply_to_message
+    return bool(
+        panel is not None
+        and panel.from_user
+        and panel.from_user.id == bot.id
+        and getattr(getattr(panel, "chat", None), "id", None) == message.chat.id
+        and message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+        and (panel.text or "").startswith(TRIGGER_HEADING)
+        and panel.reply_markup
+    )
+
+
+async def save_trigger_panel_reply(message: types.Message, db: Database):
+    text = (message.text or message.caption or "").strip()
+    if (
+        message.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP)
+        or not message.from_user
+        or getattr(message, "sender_chat", None)
+        or not await check_is_admin(message.chat, message.from_user.id)
+    ):
+        await message.reply("В группе фразы добавляют только админы.")
+        return
+    if not valid_trigger_phrase(text):
+        await message.reply("Фраза должна быть длиной 2–48 знаков и не больше 8 слов.")
+        return
+    result = await db.run(
+        Repository.add_chat_trigger_phrase,
+        message.chat.id,
+        text,
+        message.from_user.id,
+    )
+    answers = {
+        "added": "Фразу добавил.",
+        "exists": "Такая фраза уже есть.",
+        "limit": "В этом чате уже максимум 20 фраз.",
+        "invalid": "Не получилось добавить эту фразу.",
+    }
+    await message.reply(answers[result])
+    if result == "added":
+        panel = message.reply_to_message
+        text, keyboard = await settings_view(db, message.chat.id, "triggers")
+        owner = _panel_owner(panel)
+        if owner is not None:
+            keyboard = _with_panel_owner(keyboard, owner)
+        await edit_panel(panel, text, keyboard)
 
 
 async def _level(

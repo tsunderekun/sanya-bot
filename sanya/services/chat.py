@@ -104,6 +104,7 @@ async def process_chat_message(
     slop: bool = False,
     force_generation: tuple[Mode, str] | None = None,
     prompt_idea: bool = False,
+    custom_trigger: bool = False,
     db: Database,
     llm: Ollama,
 ):
@@ -142,7 +143,7 @@ async def process_chat_message(
     )
 
     is_mentioned = is_bot_mention(address_text, bot_user.username)
-    is_called_by_name = is_bot_name_call(address_text)
+    is_called_by_name = is_bot_name_call(address_text) or custom_trigger
 
     sender_name = message.from_user.username or message.from_user.first_name or "Кореш"
     is_from_original_sanya = bool(

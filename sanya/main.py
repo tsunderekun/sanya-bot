@@ -27,7 +27,17 @@ from .config import (
     TELEGRAM_PROXY,
 )
 from .database import Database
-from .handlers import basic, chat, hardware, media, memes, memory, mention_all, stickers
+from .handlers import (
+    basic,
+    chat,
+    hardware,
+    help_pages,
+    media,
+    memes,
+    memory,
+    mention_all,
+    stickers,
+)
 from .llm import Ollama
 from .services.chat import process_chat_message
 from .services.queue import RequestQueue
@@ -38,6 +48,7 @@ def build_dispatcher() -> Dispatcher:
     dp = Dispatcher()
     dp.include_routers(
         basic.make_router(),
+        help_pages.make_router(),
         memory.make_router(),
         media.make_router(),
         memes.make_router(),

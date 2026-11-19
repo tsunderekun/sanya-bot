@@ -18,6 +18,7 @@ from sanya.handlers.hardware import (
 )
 from sanya.handlers.memes import (
     cmd_meme,
+    cmd_precache,
     collect_channel_post,
     maybe_send_horse,
     preview_media,
@@ -31,6 +32,19 @@ from sanya.services.ocr import recognize_image_text
 
 
 class FeatureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_precache_status_distinguishes_scanned_added_and_total(self):
+        status = SimpleNamespace(edit_text=AsyncMock())
+        message = SimpleNamespace(text="/прекэш", reply=AsyncMock(return_value=status))
+        with patch(
+            "sanya.handlers.memes.precache_channel_memes",
+            AsyncMock(return_value={"found": 12, "new": 0, "total": 92}),
+        ):
+            await cmd_precache(message, SimpleNamespace(), SimpleNamespace())
+        reply = status.edit_text.await_args.args[0]
+        self.assertIn("Просмотрел 12 постов", reply)
+        self.assertIn("новых добавил: 0", reply)
+        self.assertIn("Всего в пуле: 92", reply)
+
     async def test_channel_media_without_caption_and_protected_post_skipped(self):
         db = SimpleNamespace(run=AsyncMock())
         message = SimpleNamespace(

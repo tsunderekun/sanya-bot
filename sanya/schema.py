@@ -29,6 +29,17 @@ def initialize(conn):
             mode TEXT NOT NULL CHECK (mode IN ('normal', 'rofl'))
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_trigger_phrases (
+            chat_id INTEGER NOT NULL,
+            phrase_key TEXT NOT NULL,
+            phrase TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+            added_by INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (chat_id, phrase_key)
+        )
+    """)
     original_tables = {
         r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
