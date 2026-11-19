@@ -21,7 +21,7 @@ from .config import (
     TELEGRAM_PROXY,
 )
 from .database import Database
-from .handlers import basic, chat, hardware, media, memes, memory, stickers
+from .handlers import basic, chat, hardware, media, memes, memory, mention_all, stickers
 from .llm import Ollama
 from .services.chat import process_chat_message
 from .services.queue import RequestQueue
@@ -37,6 +37,7 @@ def build_dispatcher() -> Dispatcher:
         memes.make_router(),
         hardware.make_router(),
         stickers.make_router(),
+        mention_all.make_router(),
         chat.make_router(),
     )
     return dp
@@ -101,6 +102,7 @@ async def register_commands(bot: Bot):
         await bot.set_my_commands(
             [
                 BotCommand(command="help", description="Все команды и гайд по лору"),
+                BotCommand(command="all", description="Позвать известных участников группы (админ)"),
                 BotCommand(command="settings", description="Настройки чата с кнопками"),
                 BotCommand(command="mode", description="Режим чата: норм или рофл"),
                 BotCommand(command="tone", description="Тон чата: дружелюбно или поострее, 0–3"),

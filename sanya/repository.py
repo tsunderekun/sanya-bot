@@ -622,6 +622,14 @@ class Repository:
             (chat_id, user_id),
         ).fetchone()[0]
 
+    def list_chat_speakers(self, chat_id: int) -> list[int]:
+        rows = self.connection.execute(
+            "SELECT DISTINCT user_id FROM messages "
+            "WHERE chat_id = ? AND role = 'user' AND user_id > 0 ORDER BY user_id",
+            (chat_id,),
+        )
+        return [row[0] for row in rows]
+
     def get_user_profile(self, user_id: int) -> Optional[sqlite3.Row]:
         """Возвращает сохраненный профиль пользователя из БД."""
         try:
