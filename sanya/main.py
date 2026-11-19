@@ -6,7 +6,13 @@ from functools import partial
 import httpx
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.types import BotCommand
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeDefault,
+)
 
 from .config import (
     BOT_TOKEN,
@@ -101,74 +107,56 @@ async def main():
 
 
 async def register_commands(bot: Bot):
-    try:
-        await bot.set_my_commands(
-            [
-                BotCommand(command="help", description="Все команды и гайд по лору"),
-                BotCommand(
-                    command="all", description="Позвать известных участников группы"
-                ),
-                BotCommand(command="settings", description="Настройки чата с кнопками"),
-                BotCommand(command="mode", description="Режим чата: норм или рофл"),
-                BotCommand(
-                    command="tone", description="Тон чата: дружелюбно или поострее, 0–3"
-                ),
-                BotCommand(command="lore", description="Частота отсылок к лору, 0–3"),
-                BotCommand(
-                    command="dict",
-                    description="Словарь конфы: посмотреть, добавить, удалить",
-                ),
-                BotCommand(command="pic", description="Найти картинку"),
-                BotCommand(command="meme", description="Случайный канальный мем"),
-                BotCommand(
-                    command="precache", description="Загрузить мемы из канала в базу"
-                ),
-                BotCommand(command="hardware", description="Показать конфиг железа"),
-                BotCommand(
-                    command="price", description="Прикинуть цену железки по Авито"
-                ),
-                BotCommand(command="booru", description="Поиск артов Booru / R34"),
-                BotCommand(command="slop", description="Поиск артов на AIBooru"),
-                BotCommand(command="code", description="Написать код по задаче"),
-                BotCommand(command="prompt", description="Написать промпт для картинки"),
-                BotCommand(
-                    command="stickeractivity",
-                    description="Частота автоматических стикеров",
-                ),
-                BotCommand(command="s", description="Поиск в интернете"),
-                BotCommand(
-                    command="kents", description="Нейро-саммари по кентам конфы"
-                ),
-                BotCommand(
-                    command="facts", description="Подмеченные факты о тебе и чате"
-                ),
-                BotCommand(
-                    command="delfact", description="Удалить автофакты по ID (админ)"
-                ),
-                BotCommand(command="stickers", description="Стикерпаки Сани Пониёба"),
-                BotCommand(
-                    command="sticker", description="Кинуть фирменный стикер Сани"
-                ),
-                BotCommand(
-                    command="clear",
-                    description="Очистить историю чата (в группе — админ)",
-                ),
-                BotCommand(command="mydata", description="Мои данные и статус кента"),
-                BotCommand(command="forgetme", description="Очистить данные из базы"),
-                BotCommand(
-                    command="setkent",
-                    description="Добавить/глянуть факты о кенте (админ)",
-                ),
-                BotCommand(
-                    command="delkent", description="Удалить факт о кенте по ID (админ)"
-                ),
-                BotCommand(
-                    command="setchat", description="Добавить/глянуть лор конфы (админ)"
-                ),
-                BotCommand(
-                    command="delchat", description="Удалить факт конфы по ID (админ)"
-                ),
-            ]
-        )
-    except Exception as e:
-        logging.warning(f"Не удалось зарегистрировать команды бота: {e}")
+    commands = {
+        command.command: command
+        for command in [
+            BotCommand(command="help", description="Все команды и гайд по лору"),
+            BotCommand(
+                command="all", description="Позвать известных участников группы"
+            ),
+            BotCommand(command="settings", description="Настройки чата с кнопками"),
+            BotCommand(
+                command="dict",
+                description="Словарь конфы: посмотреть, добавить, удалить",
+            ),
+            BotCommand(command="pic", description="Найти картинку"),
+            BotCommand(command="meme", description="Случайный канальный мем"),
+            BotCommand(command="booru", description="Поиск артов Booru / R34"),
+            BotCommand(command="slop", description="Поиск артов на AIBooru"),
+            BotCommand(command="code", description="Написать код по задаче"),
+            BotCommand(command="prompt", description="Написать промпт для картинки"),
+            BotCommand(command="facts", description="Посмотреть свои сохранённые факты"),
+            BotCommand(
+                command="clear",
+                description="Очистить историю чата (в группе — админ)",
+            ),
+            BotCommand(command="forgetme", description="Очистить данные из базы"),
+            BotCommand(
+                command="setkent",
+                description="Добавить/глянуть факты о кенте (админ)",
+            ),
+            BotCommand(
+                command="setchat", description="Добавить/глянуть лор конфы (админ)"
+            ),
+        ]
+    }
+    common = ("help", "pic", "meme", "code", "prompt", "booru", "slop")
+    group = ("help", "all", "meme", "pic", "code", "prompt", "settings", "dict")
+    menus = (
+        (BotCommandScopeDefault(), common),
+        (BotCommandScopeAllPrivateChats(), (*common, "settings", "facts", "forgetme")),
+        (BotCommandScopeAllGroupChats(), group),
+        (
+            BotCommandScopeAllChatAdministrators(),
+            (*group, "setchat", "setkent", "clear"),
+        ),
+    )
+    for scope, names in menus:
+        try:
+            await bot.set_my_commands([commands[name] for name in names], scope=scope)
+        except Exception as exc:
+            logging.warning(
+                "Не удалось зарегистрировать меню %s: %s",
+                scope.type,
+                type(exc).__name__,
+            )

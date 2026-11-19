@@ -1,16 +1,14 @@
 from hashlib import sha256
-from html import escape
 
 from aiogram import types
 from aiogram.enums import ChatType
-from aiogram.exceptions import TelegramBadRequest
 
 from ..database import Database
 from ..repository import Repository
 from ..vocabulary import BUILTIN_INDEX, BUILTIN_WORDS, word_key
 from .access import check_is_admin
-from .command_args import command_args, reply_html_lines
-from .reply_style import button
+from .command_args import command_args
+from .reply_style import button, edit_panel
 
 HELP = "/словарь добавить слово = значение\n/словарь удалить слово"
 ADD_PROMPT = "Ответь на это сообщение: слово = значение"
@@ -18,26 +16,38 @@ PAGE_SIZE = 6
 
 
 async def show_dictionary(message: types.Message, db: Database):
-    rows = await db.run(Repository.list_chat_words, message.chat.id)
-    lines = ["<b>Встроенные — не удаляются и не заменяются:</b>"]
+    text, keyboard = await dictionary_view(db, message.chat.id, 0)
+    await message.reply(text, reply_markup=keyboard, parse_mode=None)
+
+
+async def dictionary_view(db: Database, chat_id: int, page: int):
+    rows = await db.run(Repository.list_chat_words, chat_id)
+    entries = [(word, meaning, "встроенное") for word, meaning in BUILTIN_WORDS]
+    entries.extend((row["word"], row["meaning"], "из этого чата") for row in rows)
+    last = max(0, (len(entries) - 1) // PAGE_SIZE)
+    page = min(page, last)
+    start = page * PAGE_SIZE
+    lines = [f"Словарь · {page + 1}/{last + 1}", ""]
     lines.extend(
-        f"{escape(word)} — {escape(meaning)}" for word, meaning in BUILTIN_WORDS
+        f"{word} — {meaning} ({kind})"
+        for word, meaning, kind in entries[start : start + PAGE_SIZE]
     )
-    lines.append("\n<b>Добавленные в этом чате:</b>")
-    lines.extend(f"{escape(r['word'])} — {escape(r['meaning'])}" for r in rows)
-    if not rows:
-        lines.append("Пока пусто.")
-    lines.append("\n" + escape(HELP))
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
+    nav = []
+    if page:
+        nav.append(button("Назад", f"dict:{page - 1}"))
+    if page < last:
+        nav.append(button("Дальше", f"dict:{page + 1}"))
+    buttons = [nav] if nav else []
+    buttons.extend(
+        [
             [
                 button("Добавить слово", "word:add"),
                 button("Удалить слово", "word:page:0"),
             ],
-            [button("Все настройки", "open")],
+            [button("Все настройки", "view:all")],
         ]
     )
-    await reply_html_lines(message, lines, last_markup=keyboard)
+    return "\n".join(lines), types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def _word_id(row):
@@ -85,17 +95,7 @@ async def dictionary_button(query: types.CallbackQuery, db: Database):
         )
         await query.answer()
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
-        if msg.text and (
-            msg.text.startswith("Что удалить?")
-            or msg.text.startswith("Удалить слово «")
-        ):
-            try:
-                await msg.edit_text(text, reply_markup=keyboard, parse_mode=None)
-            except TelegramBadRequest as exc:
-                if "message is not modified" not in str(exc).lower():
-                    raise
-        else:
-            await msg.reply(text, reply_markup=keyboard, parse_mode=None)
+        await edit_panel(msg, text, keyboard)
         return
     row = next((r for r in rows if _word_id(r) == value), None)
     if row is None or action not in {"pick", "confirm"}:

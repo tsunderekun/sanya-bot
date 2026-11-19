@@ -18,6 +18,7 @@ from sanya.handlers.vocabulary import (
     dictionary_button,
     is_dictionary_reply,
 )
+from sanya.main import register_commands
 from sanya.repository import Repository
 from sanya.services.chat import automatic_sticker
 
@@ -44,6 +45,37 @@ class AutomaticStickerTests(unittest.TestCase):
 
 
 class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_command_menus_match_chat_scope(self):
+        bot = SimpleNamespace(set_my_commands=AsyncMock())
+        await register_commands(bot)
+        menus = {
+            call.kwargs["scope"].type: [cmd.command for cmd in call.args[0]]
+            for call in bot.set_my_commands.await_args_list
+        }
+        self.assertEqual(
+            set(menus),
+            {
+                "default",
+                "all_private_chats",
+                "all_group_chats",
+                "all_chat_administrators",
+            },
+        )
+        private, group, admins = (
+            menus[key]
+            for key in (
+                "all_private_chats",
+                "all_group_chats",
+                "all_chat_administrators",
+            )
+        )
+        self.assertIn("forgetme", private)
+        self.assertNotIn("all", private)
+        self.assertNotIn("setkent", group)
+        self.assertIn("all", group)
+        self.assertIn("setkent", admins)
+        self.assertTrue(set(group) <= set(admins))
+
     async def test_help_is_split_and_has_settings_button(self):
         msg = SimpleNamespace(reply=AsyncMock())
         await cmd_help(msg)
@@ -74,10 +106,27 @@ class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
                 data = {
                     b.callback_data for row in keyboard.inline_keyboard for b in row
                 }
-                self.assertIn("settings:all:mode:rofl", data)
-                self.assertIn("settings:all:lore:0", data)
-                self.assertIn("settings:all:sticker:0", data)
-                self.assertIn(query.data, data)
+                self.assertIn("settings:view:mode", data)
+                self.assertIn("settings:view:lore", data)
+                self.assertIn("settings:view:sticker", data)
+                self.assertIn("settings:view:tone", data)
+            with (
+                patch.object(Message, "reply", AsyncMock()) as reply,
+                patch.object(Message, "edit_text", AsyncMock()) as edit,
+            ):
+                for callback, heading in (
+                    ("view:tone", "/тон:"),
+                    ("view:all", "Настройки"),
+                    ("dict", "Словарь"),
+                    ("dict:1", "Словарь"),
+                    ("view:all", "Настройки"),
+                ):
+                    query.data = f"settings:{callback}"
+                    await update_settings(query, db)
+                    self.assertTrue(edit.await_args.args[0].startswith(heading))
+                reply.assert_not_awaited()
+                self.assertEqual(edit.await_count, 5)
+            query.data = "settings:tone:tone:3"
             with patch(
                 "sanya.handlers.reply_style.check_is_admin",
                 AsyncMock(return_value=False),

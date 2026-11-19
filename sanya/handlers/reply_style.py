@@ -23,9 +23,29 @@ def button(text: str, data: str) -> types.InlineKeyboardButton:
 
 async def settings_view(db: Database, chat_id: int, view: str):
     settings = await db.run(Repository.get_chat_reply_settings, chat_id)
-    text = ["Настройки этого чата"] if view == "all" else []
+    level = settings.sticker_level
+    sticker = STICKER_LABELS[level] if level is not None else "по умолчанию"
+    if view == "all":
+        text = (
+            "Настройки этого чата\n\n"
+            f"Режим: {MODE_LABELS[settings.mode]}\n"
+            f"Тон: {settings.style.tone} — {TONE_LABELS[settings.style.tone]}\n"
+            f"Лор: {settings.style.lore} — {LORE_LABELS[settings.style.lore]}\n"
+            f"Автостикеры: {sticker}"
+        )
+        return text, types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    button("Режим", "view:mode"),
+                    button("Тон", "view:tone"),
+                    button("Лор", "view:lore"),
+                ],
+                [button("Автостикеры", "view:sticker"), button("Словарь", "dict")],
+            ]
+        )
+    text = []
     rows = []
-    if view in ("all", "mode"):
+    if view == "mode":
         text.append(f"Режим этого чата: {MODE_LABELS[settings.mode]}")
         rows.append(
             [
@@ -36,7 +56,7 @@ async def settings_view(db: Database, chat_id: int, view: str):
             ]
         )
     for axis, (command, labels) in LEVELS.items():
-        if view not in ("all", axis):
+        if view != axis:
             continue
         current = getattr(settings.style, axis)
         text.append(f"{command}: сейчас {current} — {labels[current]}")
@@ -45,11 +65,8 @@ async def settings_view(db: Database, chat_id: int, view: str):
             for i, label in enumerate(labels)
         ]
         rows.extend((choices[:2], choices[2:]))
-    if view in ("all", "sticker"):
-        level = settings.sticker_level
-        text.append(
-            f"Автостикеры: {STICKER_LABELS[level] if level is not None else 'по умолчанию'}"
-        )
+    if view == "sticker":
+        text.append(f"Автостикеры: {sticker}")
         rows.append(
             [
                 button(f"{'✓ ' if i == level else ''}{label}", f"{view}:sticker:{i}")
@@ -57,10 +74,7 @@ async def settings_view(db: Database, chat_id: int, view: str):
             ]
         )
         rows.append([button("По умолчанию", f"{view}:sticker:default")])
-    if view == "all":
-        rows.append([button("Словарь", "dict")])
-    else:
-        rows.append([button("Все настройки", "open")])
+    rows.append([button("Все настройки", "view:all")])
     return "\n".join(text), types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -73,6 +87,14 @@ async def cmd_settings(message: types.Message, db: Database):
     await show_settings(message, db)
 
 
+async def edit_panel(message: types.Message, text: str, keyboard):
+    try:
+        await message.edit_text(text, reply_markup=keyboard, parse_mode=None)
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
+
+
 async def update_settings(query: types.CallbackQuery, db: Database):
     msg = query.message
     if not isinstance(msg, types.Message):
@@ -83,11 +105,20 @@ async def update_settings(query: types.CallbackQuery, db: Database):
         await query.answer()
         await show_settings(msg, db)
         return
-    if data == "dict":
-        from .vocabulary import show_dictionary
-
+    navigation = data.removeprefix("view:")
+    if data.startswith("view:") and navigation in VIEWS:
         await query.answer()
-        await show_dictionary(msg, db)
+        await edit_panel(msg, *await settings_view(db, msg.chat.id, navigation))
+        return
+    if data == "dict" or data.startswith("dict:"):
+        from .vocabulary import dictionary_view
+
+        page = "0" if data == "dict" else data.removeprefix("dict:")
+        if not (page.isascii() and page.isdecimal() and len(page) <= 8):
+            await query.answer("Кнопка устарела")
+            return
+        await query.answer()
+        await edit_panel(msg, *await dictionary_view(db, msg.chat.id, int(page)))
         return
     parts = data.split(":")
     if len(parts) != 3 or parts[0] not in VIEWS:
@@ -117,12 +148,7 @@ async def update_settings(query: types.CallbackQuery, db: Database):
     else:
         await db.run(Repository.set_chat_reply_level, msg.chat.id, axis, int(value))
     await query.answer("Сохранено")
-    text, keyboard = await settings_view(db, msg.chat.id, view)
-    try:
-        await msg.edit_text(text, reply_markup=keyboard, parse_mode=None)
-    except TelegramBadRequest as exc:
-        if "message is not modified" not in str(exc).lower():
-            raise
+    await edit_panel(msg, *await settings_view(db, msg.chat.id, view))
 
 
 async def _level(
