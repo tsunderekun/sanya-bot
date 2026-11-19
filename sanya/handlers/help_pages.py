@@ -6,7 +6,7 @@ from .reply_style import button
 PAGES = {
     "start": (
         "Справка · 1/6\n\nВ группе позови «Спермер», тегни @ponyeb228_bot или ответь на сообщение бота. В личке пиши как обычно. Выбери раздел:",
-        "Начало",
+        "Старт",
     ),
     "chat": (
         "<b>Общение и настройки · 2/6</b>\n\n"
@@ -16,7 +16,7 @@ PAGES = {
         "• <code>/словарь</code> — посмотреть или изменить словарь чата.\n"
         "• <code>/all</code> / <code>@all</code> — позвать админов и известных боту участников.\n"
         "• <code>/автостикеры</code> — частота автоматических стикеров.",
-        "Общение",
+        "Чат",
     ),
     "search": (
         "<b>Поиск и картинки · 3/6</b>\n\n"
@@ -25,7 +25,7 @@ PAGES = {
         "• <code>/слоп теги</code> — поиск только на AIBooru.\n"
         "• <code>/промпт описание</code> — текст для генерации; <code>/идея</code> — случайная сцена после подтверждения.\n"
         "• <code>/мем</code> — случайный мем из пула.",
-        "Поиск",
+        "Арты",
     ),
     "tools": (
         "<b>Код и железо · 4/6</b>\n\n"
@@ -33,7 +33,7 @@ PAGES = {
         "• <code>/железо</code> / <code>/сетап</code> — известная конфигурация.\n"
         "• <code>/оцени RTX 3070</code> / <code>/барыга</code> — ориентир цены по объявлениям.\n"
         "• Фото и скриншоты можно отправить Сане на разбор; OCR зависит от доступности.",
-        "Инструменты",
+        "Код",
     ),
     "memory": (
         "<b>Лор и память · 5/6</b>\n\n"
@@ -42,7 +42,7 @@ PAGES = {
         "• <code>/досье</code> / <code>/mydata</code> — свои данные; <code>/facts</code> — свои автофакты группы.\n"
         "• <code>/forgetme</code> — удалить свои сообщения и автофакты. <code>/clear</code> — очистить историю чата (в группе админ).\n"
         "История диалога разделена по чатам и авторам.",
-        "Память",
+        "Лор",
     ),
     "stickers": (
         "<b>Стикеры и прочее · 6/6</b>\n\n"
@@ -59,9 +59,11 @@ PAGES = {
 def keyboard(page: str):
     keys = list(PAGES)
     index = keys.index(page)
+    categories = [button(label, f"page:{key}") for key, (_, label) in PAGES.items()]
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [button(label, f"page:{key}") for key, (_, label) in PAGES.items()],
+            categories[:3],
+            categories[3:],
             [
                 button("←", f"page:{keys[max(0, index - 1)]}"),
                 button(f"{index + 1}/{len(keys)}", f"page:{page}"),
