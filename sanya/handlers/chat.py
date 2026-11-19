@@ -83,6 +83,7 @@ async def handle_message(
             message.from_user.id,
             self_facts,
         )
+        should_respond = False
     background_blocked = not should_respond and (
         bool(self_facts) or suppress_background_reply(address_text)
     )

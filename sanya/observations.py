@@ -35,10 +35,12 @@ _SETUP = re.compile(
 )
 _PLAY = re.compile(r"(?:я\s+)?(?:играю|катаю|гоняю)\s+в\s+(.+)", re.I)
 _PREFERENCE = re.compile(
-    r"(?:я\s+)?(не\s+люблю|ненавижу|терпеть\s+не\s+могу|люблю|обожаю|предпочитаю)\s+(.+)",
+    r"(?:я\s+)?(не\s+люблю|ненавижу|терпеть\s+не\s+могу|люблю|обожаю|предпочитаю|"
+    r"мне\s+(?:не\s+)?нрав(?:ится|ятся)|мне\s+по\s+душе|не\s+переношу|"
+    r"фанатею\s+от|кайфую\s+от|не\s+выношу)\s+(.+)",
     re.I,
 )
-# Match complete, non-sensitive topics rather than storing arbitrary free text.
+# Keep existing keys for common aliases; this is not a topic allowlist.
 _PREFERENCE_TOPICS = tuple(
     (re.compile(pattern), label)
     for pattern, label in (
@@ -57,6 +59,48 @@ _PREFERENCE_TOPICS = tuple(
     )
 )
 _GAME_VALUE = re.compile(_GAME, re.I)
+_ACTIVITY = re.compile(
+    r"(?:я\s+)?(увлекаюсь|интересуюсь|занимаюсь|коллекционирую|собираю|"
+    r"умею|изучаю|пишу|мастерю|"
+    r"(?:часто|обычно|регулярно)\s+(?:читаю|смотрю|слушаю|катаюсь|играю|готовлю)|"
+    r"(?:читаю|слушаю|смотрю|рисую|готовлю|бегаю|катаюсь|играю\s+в))\s+(.+)",
+    re.I,
+)
+_ACTIVITY_LABELS = {
+    "увлекаюсь": "Увлекается",
+    "интересуюсь": "Интересуется",
+    "занимаюсь": "Занимается",
+    "коллекционирую": "Коллекционирует",
+    "собираю": "Собирает",
+    "читаю": "Читает",
+    "смотрю": "Смотрит",
+    "слушаю": "Слушает",
+    "катаюсь": "Катается",
+    "играю": "Играет",
+    "играю в": "Играет в",
+    "готовлю": "Готовит",
+    "рисую": "Рисует",
+    "бегаю": "Бегает",
+    "умею": "Умеет",
+    "изучаю": "Изучает",
+    "пишу": "Пишет",
+    "мастерю": "Мастерит",
+}
+_SUBJECT = re.compile(r"[а-яёa-z][а-яёa-z0-9 -]{0,89}", re.I)
+_UNSAFE_OR_AMBIGUOUS = re.compile(
+    r"\b(?:а|но|или|либо|если|когда|что|чтобы|потому|наверное|возможно|буду|будет|"
+    r"хочу|планирую|собираюсь|раньше|вчера|сегодня|завтра|сейчас|вроде|не|"
+    r"я|ты|мы|вы|он[аи]?|мой|мо[яеёи]|твой|тва?оя|сво[яеёи]|себя|тебя|его|е[её]|их|"
+    r"друг\w*|коллег\w*|родител\w*|сын\w*|доч\w*|мам\w*|пап\w*|"
+    r"улиц\w*|адрес\w*|квартир\w*|проспект\w*|переул\w*|живу|работаю|"
+    r"паспорт\w*|телефон\w*|номер\w*|реквизит\w*|парол\w*|банковск\w*|"
+    r"болезн\w*|болею|диагноз\w*|лечени\w*|лекарств\w*|депресс\w*|психиатр\w*|"
+    r"секс\w*|порн\w*|эрот\w*|интим\w*|nda|нд[аa]|секрет\w*|конфиденциаль\w*|"
+    r"политик\w*|религи\w*|вероисповед\w*|национальност\w*|ориентаци\w*|"
+    r"имя|фамили\w*|подпис\w*|договор\w*|зарплат\w*|доход\w*|"
+    r"моего|моей|моему|своего|своей|своему|чуж\w*)\b",
+    re.I,
+)
 _SEPARATOR = re.compile(r"\s*(?:[,+]|\s+и\s+)\s*", re.I)
 _QUOTE_ENTITIES = {
     MessageEntityType.BLOCKQUOTE,
@@ -66,8 +110,22 @@ _QUOTE_ENTITIES = {
 }
 
 
+def _plain_subject(raw: str) -> str:
+    subject = " ".join(raw.split())
+    if (
+        not _SUBJECT.fullmatch(subject)
+        or len(subject.split()) > 8
+        or sum(c.isdigit() for c in subject) > 2
+        or _UNSAFE_OR_AMBIGUOUS.search(subject)
+        # Proper names in free text can identify people or organizations.
+        or any(word[0].isupper() for word in subject.split() if word[0].isalpha())
+    ):
+        return ""
+    return subject.casefold()
+
+
 def extract_self_facts(text: str) -> tuple[tuple[str, str], ...]:
-    """Recognize only complete, explicit self-reports with allowlisted values."""
+    """Recognize complete, explicit self-reports without storing whole messages."""
     text = text.strip()
     if not text or len(text) > 180 or any(c in text for c in "\r\n?？"):
         return ()
@@ -91,6 +149,8 @@ def extract_self_facts(text: str) -> tuple[tuple[str, str], ...]:
                 None,
             )
         if not label:
+            label = _plain_subject(preference[2])
+        if not label:
             return ()
         sentiment = {
             "не люблю": "Не любит",
@@ -99,13 +159,20 @@ def extract_self_facts(text: str) -> tuple[tuple[str, str], ...]:
             "люблю": "Любит",
             "обожаю": "Обожает",
             "предпочитаю": "Предпочитает",
+            "мне нравится": "Любит",
+            "мне нравятся": "Любит",
+            "мне не нравится": "Не любит",
+            "мне не нравятся": "Не любит",
+            "мне по душе": "Любит",
+            "не переношу": "Не любит",
+            "не выношу": "Не любит",
+            "фанатею от": "Любит",
+            "кайфую от": "Любит",
         }[verb]
         return ((f"preference:{label}", f"{sentiment}: {label}"),)
     play = _PLAY.fullmatch(text)
     match = play or _SETUP.fullmatch(text)
-    if not match:
-        return ()
-    models = _SEPARATOR.split(match[1])
+    models = _SEPARATOR.split(match[1]) if match else []
     if len(models) > 4:
         return ()
     facts = {}
@@ -119,8 +186,21 @@ def extract_self_facts(text: str) -> tuple[tuple[str, str], ...]:
                 facts[key] = f"{label}: {value}"
                 break
         else:
-            return ()
-    return tuple(facts.items())
+            break
+    else:
+        if facts:
+            return tuple(facts.items())
+    if activity := _ACTIVITY.fullmatch(text):
+        verb = " ".join(activity[1].casefold().split())
+        if subject := _plain_subject(activity[2]):
+            frequency, _, action = verb.partition(" ")
+            if frequency not in {"часто", "обычно", "регулярно"}:
+                frequency, action = "", verb
+            label = _ACTIVITY_LABELS[action]
+            if frequency:
+                label = f"{frequency.capitalize()} {label.lower()}"
+            return ((f"activity:{action}:{subject}", f"{label}: {subject}"),)
+    return ()
 
 
 def message_self_facts(message: Message, text: str) -> tuple[tuple[str, str], ...]:
