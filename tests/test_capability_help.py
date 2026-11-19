@@ -44,7 +44,6 @@ class CapabilityHelpTests(unittest.IsolatedAsyncioTestCase):
                     generate=AsyncMock(
                         side_effect=[
                             "Могу общаться и искать арт. Полный список в /help.",
-                            "В режиме сейф /r34 отключена.",
                             "В этой группе сейф отключает поиск картинок.",
                         ]
                     )
@@ -106,17 +105,20 @@ class CapabilityHelpTests(unittest.IsolatedAsyncioTestCase):
                         caption=None,
                     )
                     await process_chat_message(msg, bot, db=db, llm=llm)
+                    llm.generate.assert_awaited_once()
                     self.assertIn(
-                        "Текущий чат в режиме «сейф»",
-                        llm.generate.await_args.kwargs["system_prompt"],
+                        "включая /r34 и Booru, отключены", send.await_args.args[3]
                     )
-                    self.assertIn("/r34 отключена", send.await_args.args[3])
 
                     msg.message_id = 14
                     msg.text = "А как это работает?"
                     msg.reply_to_message.message_id = 13
                     await process_chat_message(msg, bot, db=db, llm=llm)
                     turns = llm.generate.await_args.args[0]
+                    self.assertIn(
+                        "Текущий чат в режиме «сейф»",
+                        llm.generate.await_args.kwargs["system_prompt"],
+                    )
                     self.assertIn(
                         {"role": "user", "content": "Как пользоваться /r34?"}, turns
                     )
