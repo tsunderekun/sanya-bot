@@ -48,6 +48,7 @@ from .booru import (
     search_and_download_booru_image,
 )
 from .booru_confirmation import ask_booru_confirmation
+from .capability_help import generate_help, help_context, help_kind
 from .dialogue_notes import dialogue_notes
 from .media import (
     extract_image_query,
@@ -292,6 +293,68 @@ async def process_chat_message(
         )
         await send_chat_refusal(bot, message, inj_text)
         return
+
+    if (
+        not is_proactive
+        and not (
+            force_generation
+            or force_search_query
+            or force_image_query
+            or force_booru_query
+        )
+        and not (has_photo or has_reply_photo or has_sticker or has_reply_sticker)
+        and not clean_text.startswith("/")
+    ):
+        kind = help_kind(clean_text, follow_up=True)
+        if kind:
+            chat_id, user_id = message.chat.id, message.from_user.id
+            previous = []
+            if kind == "feature":
+                rows = await db.run(
+                    Repository.get_dialogue_rows,
+                    chat_id,
+                    user_id,
+                    message.message_id,
+                    reply_to_id=reply_to_id,
+                    limit=12,
+                )
+                previous = help_context(rows, username=bot_user.username)
+            if previous or help_kind(clean_text):
+                question = strip_leading_bot_call(clean_text)
+                await db.run(
+                    Repository.save_message,
+                    chat_id,
+                    message.message_id,
+                    reply_to_id,
+                    user_id,
+                    sender_name,
+                    "user",
+                    clean_text,
+                )
+                stop = asyncio.Event()
+                typing = asyncio.create_task(keep_typing(bot, chat_id, stop))
+                try:
+                    result = await generate_help(
+                        llm, question, kind, previous, safe=safe
+                    )
+                finally:
+                    stop.set()
+                    typing.cancel()
+                    await asyncio.gather(typing, return_exceptions=True)
+                if not safe and await safe_mode(db, chat_id):
+                    return
+                sent_ids = await send_burst_messages(
+                    bot, chat_id, message.message_id, result, is_detailed=True
+                )
+                await db.run(
+                    Repository.save_chat_answer,
+                    chat_id,
+                    sent_ids,
+                    message.message_id,
+                    bot_user.id,
+                    result,
+                )
+                return
 
     infer_media = mode not in (Mode.CODE, Mode.PROMPT) and not force_search_query
     # --- 1. Отправка картинок из поиска и Booru/R34 ---
