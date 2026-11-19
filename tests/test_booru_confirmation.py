@@ -74,7 +74,11 @@ class BooruConfirmationTests(unittest.IsolatedAsyncioTestCase):
             button = message.reply.call_args.kwargs["reply_markup"].inline_keyboard[0][
                 0
             ]
-            self.assertEqual(button.text, "Vizhu")
+            self.assertEqual(button.text, "Да, я понимаю")
+            self.assertEqual(
+                message.reply.await_args.args[0],
+                "Результат может быть небезопасным. Продолжить поиск?",
+            )
             callback = SimpleNamespace(
                 data=button.callback_data,
                 message=prompt,
