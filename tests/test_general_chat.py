@@ -211,6 +211,10 @@ class ChatContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(grounded_sale_reply(unknown), "А что именно продаёшь?")
         self.assertEqual(grounded_sale_reply(unknown, has_context=True), "")
         self.assertIn("как нерабочие", grounded_sale_reply(disk))
+        self.assertIn("1 ТБ тут просто пример", grounded_sale_reply(disk))
+        known = grounded_sale_reply("Когда дохлый Seagate на 4 ТБ выставишь на Авито?")
+        self.assertIn("как нерабочие", known)
+        self.assertNotIn("1 ТБ", known)
         self.assertEqual(
             grounded_sale_reply("ты не попал в тему", original=disk, has_context=True),
             grounded_sale_reply(disk),

@@ -27,6 +27,11 @@ _BROKEN_DISK = re.compile(
     rf"(?:{_BROKEN.pattern}\s+{_DISK.pattern}|{_DISK.pattern}\s+{_BROKEN.pattern})",
     re.IGNORECASE,
 )
+_BARE_DISK_SALE = re.compile(
+    rf"{_WHEN.pattern}{_BROKEN_DISK.pattern}\s+(?:"
+    rf"{_SALE.pattern}\s+{_ON_MARKET}|{_ON_MARKET}\s+{_SALE.pattern})[\s?!\.]*",
+    re.IGNORECASE,
+)
 _CORRECTION = re.compile(
     r"(?:ты\s+)?(?:не\s+попал\s+в\s+тему|ответил\s+не\s+по\s+теме|не\s+про\s+то|не\s+о\s+том)[\s.!?]*",
     re.IGNORECASE,
@@ -53,5 +58,14 @@ def grounded_sale_reply(
             r"[,;:]|\b(?:или|а\s+если)\b", _WHEN.sub("", text, count=1), re.IGNORECASE
         )
     ):
-        return "Да хоть сейчас, но как нерабочие\nВ объяве напиши, что проверял\nПричину не знаешь — так и укажи"
+        example = (
+            "\nОбъём бери с наклейки — 1 ТБ тут просто пример"
+            if _BARE_DISK_SALE.fullmatch(text)
+            else ""
+        )
+        return (
+            "Да хоть сейчас, но как нерабочие"
+            + example
+            + "\nВ объяве напиши, что проверял\nПричину не знаешь — так и укажи"
+        )
     return ""
