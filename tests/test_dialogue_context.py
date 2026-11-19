@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from sanya.database import Database
+from sanya.intent import Mode, classify_intent
 from sanya.llm import Ollama
 from sanya.memory import compact_dialogue, fit_prompt
 from sanya.repository import Repository
@@ -33,6 +34,49 @@ class DialogueContextTests(unittest.IsolatedAsyncioTestCase):
 
     async def answer(self, chat, ids, question, content):
         await self.db.run(Repository.save_chat_answer, chat, ids, question, 99, content)
+
+    def test_code_word_is_not_a_request_for_source_code(self):
+        self.assertIs(classify_intent("Давай", "Какое кодовое слово?"), Mode.CHAT)
+        self.assertIs(classify_intent("Write the code phrase on paper"), Mode.CHAT)
+        self.assertIs(
+            classify_intent("Напиши код на Python для игры с кодовым словом"), Mode.CODE
+        )
+
+    async def test_code_word_reply_uses_only_the_targeted_branch_in_chat_mode(self):
+        await self.user_turn(-100, 1, 42, "Кодовое слово — медный кактус")
+        await self.user_turn(-100, 2, 43, "Кодовое слово — синий чайник")
+        await self.answer(-100, [3], 1, "Понял")
+        bot_user = SimpleNamespace(id=99, username="ponyeb228_bot")
+        message = SimpleNamespace(
+            chat=SimpleNamespace(id=-100, type="supergroup"),
+            message_id=4,
+            from_user=SimpleNamespace(id=43, username="tester"),
+            text="Какое кодовое слово было в сообщении, на которое ты ответил?",
+            caption=None,
+            photo=None,
+            sticker=None,
+            reply_to_message=SimpleNamespace(
+                message_id=3,
+                from_user=bot_user,
+                text="Понял",
+                photo=None,
+                sticker=None,
+            ),
+        )
+        bot = SimpleNamespace(get_me=AsyncMock(return_value=bot_user))
+        llm = SimpleNamespace(generate=AsyncMock(return_value="Медный кактус"))
+        with (
+            patch("sanya.services.chat.keep_typing", AsyncMock()),
+            patch(
+                "sanya.services.chat.send_burst_messages", AsyncMock(return_value=[5])
+            ) as send,
+        ):
+            await process_chat_message(message, bot, db=self.db, llm=llm)
+        prompt = "\n".join(turn["content"] for turn in llm.generate.await_args.args[0])
+        self.assertIn("Исходный вопрос: Кодовое слово — медный кактус", prompt)
+        self.assertNotIn("синий чайник", prompt)
+        self.assertFalse(llm.generate.await_args.kwargs["is_coding_request"])
+        self.assertEqual(send.await_args.args[3], "Медный кактус")
 
     async def test_interleaved_users_and_chats_are_isolated_in_model_prompt(self):
         await self.user_turn(-100, 1, 42, "Мой разговор про акварель")

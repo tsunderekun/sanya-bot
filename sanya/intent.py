@@ -283,9 +283,16 @@ ENGLISH_CODE = re.compile(
     r"\b(?:write|generate|create|draft|implement|give|show)\b[^\n?!]{0,100}\b(?:script|program|code|function|macro|python|bash|javascript|powershell)\b",
     re.I,
 )
+CODEWORD_PHRASE = re.compile(
+    r"\b(?:кодово\w*\s+(?:слов\w*|фраз\w*)|code\s+(?:words?|phrases?))\b",
+    re.I,
+)
 
 
 def classify_intent(text: str, quoted: str = "") -> Mode:
+    # A passphrase is not source code, including when quoted in a reply.
+    text = CODEWORD_PHRASE.sub("пароль", text)
+    quoted = CODEWORD_PHRASE.sub("пароль", quoted)
     if PROMPT_REQUEST.search(text):
         return Mode.PROMPT
     if (
