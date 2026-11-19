@@ -66,6 +66,64 @@ class GeneralChatTests(unittest.TestCase):
 
 
 class ChatContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_auto_stickers_roll_once_per_chat_answer_without_model_hint(self):
+        with tempfile.TemporaryDirectory() as root:
+            async with Database(Path(root) / "stickers.db") as db:
+                message = SimpleNamespace(
+                    chat=SimpleNamespace(id=-100, type="supergroup"),
+                    message_id=1,
+                    from_user=SimpleNamespace(id=42, username="kent"),
+                    text="Спермер, как катка?",
+                    caption=None,
+                    photo=None,
+                    sticker=None,
+                    reply_to_message=None,
+                )
+                bot = SimpleNamespace(
+                    get_me=AsyncMock(
+                        return_value=SimpleNamespace(id=9, username="ponyeb228_bot")
+                    )
+                )
+                text = "Первый раунд бодро пошёл\nА дальше сами себе враги"
+                llm = SimpleNamespace(generate=AsyncMock())
+                with (
+                    patch(
+                        "sanya.services.chat.send_burst_messages", AsyncMock()
+                    ) as send,
+                    patch("sanya.services.chat.keep_typing", AsyncMock()),
+                    patch(
+                        "sanya.services.chat.send_sanya_sticker", AsyncMock()
+                    ) as sticker,
+                    patch(
+                        "sanya.services.chat.automatic_sticker", return_value=True
+                    ) as roll,
+                ):
+                    for level, hint, delivered, expected_roll, expected_emoji in (
+                        (3, "", True, True, None),
+                        (3, "\n[стикер: 😁]", True, True, "😁"),
+                        (None, "", True, False, None),
+                        (None, "\n[стикер: 😁]", True, True, "😁"),
+                        (3, "", False, False, None),
+                    ):
+                        with self.subTest(level=level, hint=hint, delivered=delivered):
+                            await db.run(Repository.set_chat_sticker_level, -100, level)
+                            llm.generate.return_value = text + hint
+                            send.return_value = (
+                                [message.message_id + 1, message.message_id + 2]
+                                if delivered
+                                else []
+                            )
+                            roll.reset_mock()
+                            sticker.reset_mock()
+                            await process_chat_message(message, bot, db=db, llm=llm)
+                            self.assertEqual(roll.call_count, int(expected_roll))
+                            self.assertEqual(sticker.await_count, int(expected_roll))
+                            if expected_roll:
+                                self.assertEqual(
+                                    sticker.await_args.kwargs["emoji"], expected_emoji
+                                )
+                            message.message_id += 3
+
     async def test_reply_to_later_burst_line_gets_original_question_not_group_noise(
         self,
     ):

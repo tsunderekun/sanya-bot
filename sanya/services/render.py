@@ -36,6 +36,11 @@ SELF_HUMILIATION_CHECK = re.compile(
     re.I,
 )
 CHAT_FALLBACK = "Чёт ответ не собрался"
+_CHAT_SLASH = re.compile(
+    r"(?P<literal>`[^`\n]*`|(?:https?://|www\.)[^\s]+)"
+    r"|(?<=[А-Яа-яЁё.!?])[ \t]+/[ \t]+(?=[А-ЯЁ][а-яё]*\b)"
+    r"|(?<=[а-яё])/(?=(?:А|Но|Если|Когда|Зато|Поэтому)[ \t]+)"
+)
 
 
 def _parts(text: str):
@@ -81,6 +86,9 @@ def clean_response(text: str, mode: Mode) -> tuple[str, str | None, bool]:
             # Keep the actual joke or explanation, not its formatting wrappers.
             body = re.sub(r"\[([^\[\]\n]+)\]\((https?://[^\s)]+)\)", r"\1 (\2)", body)
             body = body.translate(BRACKETS)
+        if mode is Mode.CHAT:
+            # Older prompt examples used slashes between separate replies.
+            body = _CHAT_SLASH.sub(lambda m: m["literal"] or "\n", body)
         body = body.translate(EXCLAMATION)
         body = re.sub(r"(?m)^\s*#{1,6}\s+", "", body)
         clean.append(re.sub(r"(?m)[.。…]+(?=[ \t]*\r?$)", "", body))

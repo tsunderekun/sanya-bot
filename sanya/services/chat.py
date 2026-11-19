@@ -533,6 +533,7 @@ async def process_chat_message(
             bot_user.id,
             f"[Вымысел из режима рофла] {text}" if rofl else text,
         )
+        return bool(sent_ids)
 
     lore_allowed = (
         plain_chat
@@ -711,15 +712,20 @@ async def process_chat_message(
                 if mode in (Mode.CODE, Mode.PROMPT)
                 else "Дай законченный ответ без служебных меток.",
             )
-        if mode is Mode.CHAT and re.search(
-            r"\b(?:кинь|кидай|кинуть)\s+(?:плотную|зигу|зигулю)\b", query_text, re.I
-        ):
+        suppress_auto_sticker = bool(
+            mode is Mode.CHAT
+            and re.search(
+                r"\b(?:кинь|кидай|кинуть)\s+(?:плотную|зигу|зигулю)\b", query_text, re.I
+            )
+        )
+        if suppress_auto_sticker:
             result = (
                 "Не, такое не кидаю"
                 if style.tone == 0
                 else "Руку свою опусти клоун\nТут не цирк братан"
             )
         if mode is Mode.CHAT and SELF_HUMILIATION_CHECK.search(result):
+            suppress_auto_sticker = True
             result = (
                 "Не, в это не играю"
                 if style.tone == 0
@@ -728,6 +734,7 @@ async def process_chat_message(
         if not valid_output(result, mode):
             logging.warning("Reply render fallback mode=%s rofl=%s", mode.name, rofl)
             sticker = False
+            suppress_auto_sticker = True
             result = {
                 Mode.CODE: "Скрипт целиком не собрался\nДавай разобьём задачу на части",
                 Mode.PROMPT: "Промпт целиком не собрался\nДавай уточним теги братан",
@@ -737,18 +744,22 @@ async def process_chat_message(
         typing_task.cancel()
         await asyncio.gather(typing_task, return_exceptions=True)
 
-    await send_answer(result, detailed=mode is not Mode.CHAT)
-    if mode is Mode.CHAT and sticker:
+    sent = await send_answer(result, detailed=mode is not Mode.CHAT)
+    if sent and mode is Mode.CHAT and not suppress_auto_sticker:
         sticker_settings = (
             settings
             if plain_chat
             else await db.run(Repository.get_chat_reply_settings, chat_id)
         )
-        if automatic_sticker(sticker_settings.sticker_level, CHAT_STICKER_CHANCE):
+        level = sticker_settings.sticker_level
+        eligible = sticker if level is None else plain_chat and not insult
+        if eligible and automatic_sticker(level, CHAT_STICKER_CHANCE):
             await send_sanya_sticker(
                 bot,
                 chat_id,
-                emoji=emoji or (message.sticker.emoji if has_sticker else "😁"),
+                emoji=(emoji if sticker else None)
+                or (message.sticker.emoji if has_sticker else None)
+                or ("😁" if level is None else None),
                 db=db,
             )
 

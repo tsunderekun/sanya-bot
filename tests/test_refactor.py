@@ -77,6 +77,36 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(render_messages(chat, detailed=False)), 2)
         self.assertFalse(valid_output("```python\nfor x in:\n```", Mode.CODE))
 
+    def test_render_splits_slash_separated_chat_replies(self):
+        reply = (
+            "Райзены норм работают конечно / Зависит от того что ты в них "
+            "хочешь запихнуть/Если просто гейминг то они топчик\n[стикер: 😁]"
+        )
+        clean, emoji, sticker = clean_response(reply, Mode.CHAT)
+        self.assertEqual(
+            render_messages(clean, detailed=False),
+            [
+                "Райзены норм работают конечно",
+                "Зависит от того что ты в них хочешь запихнуть",
+                "Если просто гейминг то они топчик",
+            ],
+        )
+        self.assertEqual((emoji, sticker), ("😁", True))
+
+    def test_render_preserves_literal_slashes(self):
+        for reply in (
+            "Глянь https://example.test/что/Если и /help",
+            "Там USB-C/USB4, ВК/ТГ, 1/2 и папка /tmp/log",
+            "Проверь `да / Нет`",
+            "Напиши /Настройки",
+        ):
+            with self.subTest(reply=reply):
+                self.assertEqual(clean_response(reply, Mode.CHAT)[0], reply)
+        detail = "Нужен драйвер / А не обновление"
+        self.assertEqual(clean_response(detail, Mode.DETAIL)[0], detail)
+        code = '```python\nprint("да / Нет")\n```'
+        self.assertEqual(clean_response(code, Mode.CODE)[0], code)
+
     def test_render_uses_emoji_only_as_sticker_hint(self):
         reply = "ну вот приехали 😁\nдавай покажи что случилось 1️⃣\n[стикер: 😵‍💫]"
         self.assertEqual(
