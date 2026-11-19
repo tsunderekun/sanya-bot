@@ -2,6 +2,12 @@ from .lore import INITIAL_CHATS_LORE, INITIAL_KENTS_PROFILES
 
 
 def initialize(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_reply_modes (
+            chat_id INTEGER PRIMARY KEY,
+            mode TEXT NOT NULL CHECK (mode IN ('normal', 'rofl'))
+        )
+    """)
     original_tables = {
         r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }

@@ -1,10 +1,54 @@
-from aiogram import Router, types
+import logging
+
+from aiogram import F, Router, types
 from aiogram.enums import ChatType
 from aiogram.filters import Command
 
 from ..database import Database
 from ..repository import Repository
 from .access import check_is_admin
+from .command_args import command_args
+
+log = logging.getLogger(__name__)
+MODE_LABELS = {"normal": "норм", "rofl": "рофл"}
+MODE_ARGS = {"норм": "normal", "normal": "normal", "рофл": "rofl", "rofl": "rofl"}
+RELEASE_ACK = "reply-mode:seen"
+
+
+async def cmd_reply_mode(message: types.Message, db: Database):
+    arg = command_args(message).casefold()
+    chat = message.chat
+    if not arg:
+        mode = await db.run(Repository.get_chat_reply_mode, chat.id)
+        await message.reply(
+            f"Режим этого чата: {MODE_LABELS[mode]}\n/режим норм или /режим рофл"
+        )
+        return
+    if arg not in MODE_ARGS:
+        await message.reply("Выбери /режим норм или /режим рофл")
+        return
+    if chat.type != ChatType.PRIVATE and (
+        not message.from_user or not await check_is_admin(chat, message.from_user.id)
+    ):
+        await message.reply("В группе режим может поменять только админ.")
+        return
+    mode = MODE_ARGS[arg]
+    await db.run(Repository.set_chat_reply_mode, chat.id, mode)
+    await message.reply(f"Режим этого чата: {MODE_LABELS[mode]}")
+
+
+async def confirm_release(query: types.CallbackQuery):
+    msg = query.message
+    if (
+        not isinstance(msg, types.Message)
+        or msg.chat.type != ChatType.PRIVATE
+        or msg.chat.id != query.from_user.id
+    ):
+        await query.answer()
+        return
+    await query.answer("Вижу, подтверждение принято")
+    await msg.edit_reply_markup(reply_markup=None)
+    log.info("Reply mode release acknowledged")
 
 
 async def cmd_start(message: types.Message, db: Database):
@@ -25,6 +69,7 @@ async def cmd_help(message: types.Message):
         "<b>Команды и возможности Сани Пониёба:</b>\n\n"
         "В группе позови «Спермер», тегни <code>@ponyeb228_bot</code> или ответь на сообщение бота. «Саня» и тег живого Сани бота не зовут. В личке пиши как обычно.\n\n"
         "<b>Основные команды:</b>\n"
+        "• <code>/режим</code> или <code>/mode</code> — текущий режим; <code>/режим норм</code> или <code>/режим рофл</code> — переключить (в группе только админ).\n"
         "• <code>/s &lt;запрос&gt;</code> (или <code>/поиск</code>, <code>/найти</code>, <code>/гугл</code>) — поиск в сети через SearXNG\n"
         "• <code>/pic &lt;запрос&gt;</code> (или <code>/пикча</code>, <code>/картинка</code>, <code>/фото</code>) — найти и закинуть сочную картинку в чат\n"
         "• <code>/booru &lt;теги&gt;</code> (или <code>/r34</code>, <code>/derpi</code>, <code>/буру</code>, <code>/р34</code>) — поиск артов на Derpibooru и аниме-бордах\n"
@@ -87,6 +132,8 @@ async def cmd_clear(message: types.Message, db: Database):
 def make_router() -> Router:
     router = Router(name=__name__)
     router.message.register(cmd_start, Command("start", "старт"))
+    router.message.register(cmd_reply_mode, Command("mode", "режим"))
+    router.callback_query.register(confirm_release, F.data == RELEASE_ACK)
     router.message.register(
         cmd_help,
         Command("help", "commands", "хелп", "помощь", "команды", "инфо", "справка"),

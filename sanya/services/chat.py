@@ -416,6 +416,13 @@ async def process_chat_message(
     )
     chat_id = message.chat.id
     user_id = message.from_user.id
+    explicit = re.match(r"(?:погугли|загугли|найди|чекни)\s+(.+)", query_text, re.I)
+    rofl = (
+        not (force_search_query or force_image_query or force_booru_query or explicit)
+        and not (image_desc or ocr_text)
+        and mode in (Mode.CHAT, Mode.DETAIL)
+        and await db.run(Repository.get_chat_reply_mode, chat_id) == "rofl"
+    )
     thread = reply_quote_prefix.strip()
     original = ""
     if is_reply_to_bot and not force_search_query:
@@ -461,11 +468,12 @@ async def process_chat_message(
             sent_ids,
             message.message_id,
             bot_user.id,
-            text,
+            f"[Вымысел из режима рофла] {text}" if rofl else text,
         )
 
     if (
         not force_search_query
+        and not rofl
         and not is_proactive
         and mode not in (Mode.CODE, Mode.PROMPT)
         and not (has_photo or has_reply_photo or has_sticker or has_reply_sticker)
@@ -485,8 +493,8 @@ async def process_chat_message(
     )
     if insult and mode not in (Mode.CODE, Mode.PROMPT):
         mode = Mode.CHAT
+        rofl = False
     can_search = may_search(mode, enabled=ENABLE_WEB_SEARCH, insult=insult)
-    explicit = re.match(r"(?:погугли|загугли|найди|чекни)\s+(.+)", query_text, re.I)
     search_query = (
         (force_search_query or (explicit[1] if explicit else "")) if can_search else ""
     )
@@ -508,6 +516,7 @@ async def process_chat_message(
         if ocr_text:
             notes.insert(0, "Текст на скриншоте/фото: " + ocr_text)
         if kent_question:
+            rofl = False
             mode = Mode.DETAIL
             search_query = ""
             can_search = False
@@ -522,7 +531,7 @@ async def process_chat_message(
             )
         if is_proactive:
             directives.append("Вступи в разговор, тебя прямо не тегали.")
-        system_prompt = build_system_prompt(mode, query_text, *directives)
+        system_prompt = build_system_prompt(mode, query_text, *directives, rofl=rofl)
 
         async def generate(search: str = "", correction: str = ""):
             turn = build_turn(current, notes=notes, search=search, thread=thread)
@@ -545,6 +554,7 @@ async def process_chat_message(
         result, emoji, sticker, raw = await generate(search_context)
         if (
             can_search
+            and not rofl
             and not search_query
             and not is_proactive
             and not image_desc

@@ -101,6 +101,7 @@ async def register_commands(bot: Bot):
         await bot.set_my_commands(
             [
                 BotCommand(command="help", description="Все команды и гайд по лору"),
+                BotCommand(command="mode", description="Режим чата: норм или рофл"),
                 BotCommand(command="pic", description="Найти картинку"),
                 BotCommand(command="meme", description="Случайный канальный мем"),
                 BotCommand(

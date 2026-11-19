@@ -79,7 +79,9 @@ class Repository:
                 (channel_id,),
             ).fetchone()
         else:
-            row = self.connection.execute("SELECT count(*) FROM channel_memes").fetchone()
+            row = self.connection.execute(
+                "SELECT count(*) FROM channel_memes"
+            ).fetchone()
         return row[0] if row else 0
 
     def recent_booru_ids(self, chat_id):
@@ -540,6 +542,20 @@ class Repository:
         except Exception as e:
             logging.error(f"Ошибка обновления профиля пользователя {user_id}: {e}")
 
+    def get_chat_reply_mode(self, chat_id: int) -> str:
+        row = self.connection.execute(
+            "SELECT mode FROM chat_reply_modes WHERE chat_id = ?", (chat_id,)
+        ).fetchone()
+        return row[0] if row else "normal"
+
+    def set_chat_reply_mode(self, chat_id: int, mode: str) -> None:
+        with self.connection as conn:
+            conn.execute(
+                "INSERT INTO chat_reply_modes (chat_id, mode) VALUES (?, ?) "
+                "ON CONFLICT(chat_id) DO UPDATE SET mode = excluded.mode",
+                (chat_id, mode),
+            )
+
     def count_user_chat_messages(self, chat_id: int, user_id: int) -> int:
         return self.connection.execute(
             "SELECT COUNT(*) FROM messages WHERE chat_id = ? AND user_id = ? AND role = 'user'",
@@ -861,7 +877,12 @@ class Repository:
             return None
 
     def save_chat_answer(
-        self, chat_id: int, message_ids: list[int], question_id: int, bot_id: int, text: str
+        self,
+        chat_id: int,
+        message_ids: list[int],
+        question_id: int,
+        bot_id: int,
+        text: str,
     ) -> None:
         if not message_ids:
             return

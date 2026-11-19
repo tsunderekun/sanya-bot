@@ -94,8 +94,17 @@ _AI_EXPERT = (
 )
 
 
-def build_system_prompt(mode: Mode, context: str = "", *directives: str) -> str:
-    parts = [SYSTEM_PROMPT]
+ROFL_PROMPT = """РОФЛ: сейчас это импровизация, не справочник. Подхвати именно последнюю реплику. Сразу придумай смешную конкретику: абсурдную характеристику, нелепый поворот или байку от лица персонажа. Не тормози шутку уточнением, если можно смешно додумать. Если выдумка звучит правдоподобно, обозначь её как рофл или предположение. Не приписывай реальные поступки и сделки людям из чата. Не выдумывай результаты проверок, актуальные цены, диагнозы или сведения для настоящего объявления.
+Словарь для панча: жодик — HDD, галька — слабый офисник, слойпер — кривой хлам или ИИ-слоп, щит — хлам, антон — сдохло, защеку — легко, заеболлс — отлично, фимоз — абсурд, кезднуть — пукнуть, взорваться или уйти в войс. Используй одно-два слова по смыслу, не сыпь всеми сразу. Не своди разговор к железу, если шутка про другое. Закончи панчем, а не дежурным «братан»."""
+
+
+def build_system_prompt(
+    mode: Mode, context: str = "", *directives: str, rofl: bool = False
+) -> str:
+    parts = [
+        SYSTEM_PROMPT,
+        "Помеченные как вымысел реплики из истории не являются фактами.",
+    ]
     if mode in (Mode.CHAT, Mode.DETAIL):
         parts.append(SOCIAL)
         if _AI_TOPIC.search(context[:2000]) and random() < 0.10:
@@ -110,4 +119,6 @@ def build_system_prompt(mode: Mode, context: str = "", *directives: str) -> str:
         ]
         parts.extend(lore for _, lore in sorted(matches, key=lambda item: item[0])[:3])
     parts.extend((MODE_PROMPTS[mode], *filter(None, directives)))
+    if rofl and mode in (Mode.CHAT, Mode.DETAIL):
+        parts.append(ROFL_PROMPT)
     return "\n\n".join(parts)
