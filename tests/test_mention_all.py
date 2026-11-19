@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from sanya.database import Database
 from sanya.handlers.mention_all import _CALL, mention_all
@@ -54,18 +54,20 @@ class MentionAllTests(unittest.IsolatedAsyncioTestCase):
                     Repository.save_message, cid, mid, None, uid, "test", role, "Привет"
                 )
             cooldowns = {}
-            await mention_all(message, bot, db, cooldowns)
+            with patch("sanya.handlers.mention_all.monotonic", return_value=100):
+                await mention_all(message, bot, db, cooldowns)
             text = message.reply.await_args.args[0]
             for uid in (2, 3, 6):
                 self.assertIn(f'tg://user?id={uid}"', text)
             self.assertIn("&lt;Гость&amp;&gt;", text)
             self.assertEqual(text.count("tg://user?id="), 3)
             self.assertEqual(bot.get_chat_member.await_count, 5)
-            await mention_all(message, bot, db, cooldowns)
-            self.assertIn("5 минут", message.reply.await_args.args[0])
+            with patch("sanya.handlers.mention_all.monotonic", return_value=100):
+                await mention_all(message, bot, db, cooldowns)
+            self.assertIn("5:00", message.reply.await_args.args[0])
             self.assertEqual(bot.get_chat_member.await_count, 5)
 
-    async def test_nonadmin_cannot_ping(self):
+    async def test_group_cooldown_is_shared_and_depends_on_callers_role(self):
         message = NS(
             chat=NS(id=-100, type="supergroup"),
             from_user=member(2).user,
@@ -73,11 +75,24 @@ class MentionAllTests(unittest.IsolatedAsyncioTestCase):
             forward_origin=None,
             reply=AsyncMock(),
         )
-        bot = NS(get_chat_administrators=AsyncMock(return_value=[member(1)]))
-        db = NS(run=AsyncMock())
-        await mention_all(message, bot, db, {})
-        self.assertIn("только админы", message.reply.await_args.args[0])
-        db.run.assert_not_awaited()
+        bot = NS(get_chat_administrators=AsyncMock(return_value=[member(1), member(4)]))
+        db = NS(run=AsyncMock(return_value=[]))
+        cooldowns = {}
+        for now, chat_id, uid, expected in (
+            (0, -100, 2, 'tg://user?id=1"'),
+            (299, -100, 1, "0:01"),
+            (300, -100, 1, 'tg://user?id=4"'),
+            (301, -100, 3, "14:59"),
+            (301, -200, 3, 'tg://user?id=1"'),
+            (1199, -100, 3, "0:01"),
+            (1200, -100, 3, 'tg://user?id=1"'),
+        ):
+            with self.subTest(now=now, chat=chat_id, uid=uid):
+                message.chat.id = chat_id
+                message.from_user = member(uid).user
+                with patch("sanya.handlers.mention_all.monotonic", return_value=now):
+                    await mention_all(message, bot, db, cooldowns)
+                self.assertIn(expected, message.reply.await_args.args[0])
 
     async def test_anonymous_admin_and_multiple_batches(self):
         chat = NS(id=-100, type="supergroup")

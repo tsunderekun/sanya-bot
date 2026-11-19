@@ -1,6 +1,7 @@
 import asyncio
 import re
 from html import escape
+from math import ceil
 from time import monotonic
 
 from aiogram import Bot, F, Router, types
@@ -12,7 +13,8 @@ from ..database import Database
 from ..repository import Repository
 
 _CALL = re.compile(r"^\s*@all(?=\s|$)", re.I)
-_COOLDOWN = 300
+_ADMIN_COOLDOWN = 5 * 60
+_MEMBER_COOLDOWN = 15 * 60
 _BATCH_SIZE = 20
 _LOOKUP_CONCURRENCY = 4
 
@@ -51,17 +53,30 @@ async def mention_all(
         await message.reply("Не получилось проверить админов группы.")
         return
     people = {m.user.id: m.user for m in admins if not m.user.is_bot}
-    if not anonymous_admin and author.id not in people:
-        await message.reply("Звать всех могут только админы группы.")
-        return
+    is_admin = anonymous_admin or (author is not None and author.id in people)
 
     now = monotonic()
-    for key in [key for key, expiry in cooldowns.items() if expiry <= now]:
+    for key in [
+        key for key, last in cooldowns.items() if now - last >= _MEMBER_COOLDOWN
+    ]:
         del cooldowns[key]
-    if chat_id in cooldowns:
-        await message.reply("Уже звали всех. Между вызовами должно пройти 5 минут.")
-        return
-    cooldowns[chat_id] = now + _COOLDOWN
+    previous = cooldowns.get(chat_id)
+    delay = _ADMIN_COOLDOWN if is_admin else _MEMBER_COOLDOWN
+    if previous is not None:
+        remaining = delay - (now - previous)
+        if remaining > 0:
+            minutes, seconds = divmod(ceil(remaining), 60)
+            await message.reply(
+                f"Уже звали всех. До следующего вызова для тебя: {minutes}:{seconds:02d}."
+            )
+            return
+    cooldowns[chat_id] = now
+
+    def restore_cooldown():
+        if previous is None:
+            cooldowns.pop(chat_id, None)
+        else:
+            cooldowns[chat_id] = previous
 
     ids = await db.run(Repository.list_chat_speakers, chat_id)
 
@@ -85,14 +100,14 @@ async def mention_all(
                 if member:
                     people[member.id] = member
     except TelegramAPIError:
-        cooldowns.pop(chat_id, None)
+        restore_cooldown()
         await message.reply("Не получилось проверить участников. Попробуй позже.")
         return
 
     if author:
         people.pop(author.id, None)
     if not people:
-        cooldowns.pop(chat_id, None)
+        restore_cooldown()
         await message.reply("Не нашёл других известных участников этой группы.")
         return
     mentions = [_mention(user) for user in people.values()]

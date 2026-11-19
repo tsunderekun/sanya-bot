@@ -102,7 +102,7 @@ async def register_commands(bot: Bot):
         await bot.set_my_commands(
             [
                 BotCommand(command="help", description="Все команды и гайд по лору"),
-                BotCommand(command="all", description="Позвать известных участников группы (админ)"),
+                BotCommand(command="all", description="Позвать известных участников группы"),
                 BotCommand(command="settings", description="Настройки чата с кнопками"),
                 BotCommand(command="mode", description="Режим чата: норм или рофл"),
                 BotCommand(command="tone", description="Тон чата: дружелюбно или поострее, 0–3"),
