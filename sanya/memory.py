@@ -20,8 +20,12 @@ def newest_suffix(messages: Iterable[Turn], max_chars: int) -> list[Turn]:
     return selected[::-1]
 
 
-def build_turn(text: str, *, notes: list[str], search: str = "") -> Turn:
-    parts = ["Сообщение:\n" + text]
+def build_turn(
+    text: str, *, notes: list[str], search: str = "", thread: str = ""
+) -> Turn:
+    parts = []
+    if thread:
+        parts.append("Контекст реплая: " + json.dumps(thread, ensure_ascii=False))
     if search:
         parts.append("Данные из сети: " + json.dumps(search[:1300], ensure_ascii=False))
     if notes:
@@ -35,6 +39,7 @@ def build_turn(text: str, *, notes: list[str], search: str = "") -> Turn:
             parts.append(
                 "Справочные заметки: " + json.dumps(selected, ensure_ascii=False)
             )
+    parts.append("Текущее сообщение (ответь на него):\n" + text)
     return {"role": "user", "content": "\n\n".join(parts)}
 
 

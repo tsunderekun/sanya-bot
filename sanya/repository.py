@@ -860,6 +860,31 @@ class Repository:
             logging.error(f"Ошибка чтения сообщения из SQLite: {e}")
             return None
 
+    def save_chat_answer(
+        self, chat_id: int, message_ids: list[int], question_id: int, bot_id: int, text: str
+    ) -> None:
+        if not message_ids:
+            return
+        # Follow-up replies can target any part of a burst. Store its text once.
+        with self.connection as conn:
+            conn.executemany(
+                "INSERT INTO messages (chat_id, message_id, reply_to_id, user_id, user_name, role, content) "
+                "VALUES (?, ?, ?, ?, 'Саня Пониёб', 'assistant', ?)",
+                (
+                    (chat_id, mid, question_id, bot_id, text if i == 0 else "")
+                    for i, mid in enumerate(message_ids)
+                ),
+            )
+
+    def get_answer_question(self, chat_id: int, answer_id: int) -> sqlite3.Row | None:
+        return self.connection.execute(
+            "SELECT q.content FROM messages a JOIN messages q "
+            "ON q.chat_id = a.chat_id AND q.message_id = a.reply_to_id AND q.role = 'user' "
+            "WHERE a.chat_id = ? AND a.message_id = ? AND a.role = 'assistant' "
+            "ORDER BY q.id DESC LIMIT 1",
+            (chat_id, answer_id),
+        ).fetchone()
+
     def get_recent_messages(
         self,
         chat_id: int,
@@ -880,7 +905,8 @@ class Repository:
                     """
                     SELECT role, user_name, content
                     FROM messages
-                    WHERE chat_id = ? AND (? IS NULL OR message_id = 0 OR message_id < ?)
+                    WHERE chat_id = ? AND content != ''
+                        AND (? IS NULL OR COALESCE(NULLIF(message_id, 0), reply_to_id, 0) < ?)
                     ORDER BY id DESC
                     LIMIT ?
                 """,

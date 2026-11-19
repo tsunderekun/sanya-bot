@@ -22,27 +22,30 @@ async def keep_typing(bot: Bot, chat_id: int, stop_event: asyncio.Event):
 
 async def send_burst_messages(
     bot: Bot, chat_id: int, reply_to_id: int, text: str, is_detailed: bool = False
-):
-    """Отправляет готовый ответ без обрезки блоков кода при лимите Telegram."""
+) -> list[int]:
+    """Отправляет ответ без обрезки кода и возвращает ID отправленных частей."""
     reply = (
         ReplyParameters(message_id=reply_to_id, allow_sending_without_reply=True)
         if reply_to_id
         else None
     )
     if is_detailed and needs_document(text):
-        await bot.send_document(
+        sent = await bot.send_document(
             chat_id,
             BufferedInputFile(text.encode("utf-8"), filename="sanya-answer.md"),
             reply_parameters=reply,
         )
-        return
+        return [sent.message_id]
     chunks = render_messages(text, detailed=is_detailed)
+    sent_ids = []
     for index, chunk in enumerate(chunks):
         if index and not is_detailed:
             await asyncio.sleep(random.uniform(0.35, 0.75))
-        await bot.send_message(
+        sent = await bot.send_message(
             chat_id,
             chunk,
             parse_mode="HTML",
             reply_parameters=reply if index == 0 else None,
         )
+        sent_ids.append(sent.message_id)
+    return sent_ids

@@ -1,4 +1,3 @@
-import random
 import re
 
 from aiogram.types import Message
@@ -22,8 +21,34 @@ ALIAS_PATTERN = re.compile(
     re.I,
 )
 
+_GENERIC_WORDS = {
+    "авито",
+    "продать",
+    "продажа",
+    "спермер",
+    "саня",
+    "железо",
+    "кент",
+    "братан",
+    "когда",
+    "какой",
+    "какая",
+    "какие",
+    "почему",
+    "теперь",
+    "сегодня",
+    "вообще",
+}
 
-def _collect(repo, uid, chat_id, replied, text, include_kents):
+
+def _anchors(text):
+    return (
+        set(re.findall(r"\b\w{4,}\b", text.casefold().replace("ё", "е")))
+        - _GENERIC_WORDS
+    )
+
+
+def _collect(repo, uid, chat_id, text, include_kents):
     notes = []
     kent_question = False
     if include_kents and KENTS_QUESTION.search(text):
@@ -49,40 +74,43 @@ def _collect(repo, uid, chat_id, replied, text, include_kents):
             kent_question = True
     if kent_question:
         return notes, True
-    profile = repo.get_user_profile(uid)
-    if profile and profile["persona_notes"]:
-        notes.append(f"Собеседник — кент: {profile['persona_notes'][:400]}")
-    elif profile and profile["message_count"] >= 25:
-        notes.append("Собеседник — старый кент")
-    if replied and random.random() < 0.20:
-        profile = repo.get_user_profile(replied)
-        if profile and profile["persona_notes"]:
-            notes.append(f"Реплай на кента: {profile['persona_notes'][:180]}")
+    anchors = _anchors(text)
+
+    def relevant(note):
+        return bool(anchors & _anchors(note))
+
     chat = repo.get_chat_profile(chat_id)
     if chat and chat["chat_lore"]:
-        notes.append(f"Лор конфы {chat['title']}: {chat['chat_lore'][:400]}")
+        relevant_lines = [
+            part
+            for part in re.split(r"\n+|(?<=[.!?])\s+", chat["chat_lore"])
+            if relevant(part)
+        ]
+        if relevant_lines:
+            notes.append(f"Лор конфы: {' '.join(relevant_lines)[:400]}")
     self_facts = repo.get_self_facts(chat_id, uid, 3)
+    if text and not re.search(
+        r"\b(?:у меня|мой|моя|мо[иеё]|мою|мне|про меня)\b", text, re.I
+    ):
+        self_facts = [f for f in self_facts if relevant(f["fact_text"])]
     if self_facts:
         notes.append(
             "Со слов собеседника в этом чате (при расхождении верь ручному лору): "
             + "; ".join(f["fact_text"][:100] for f in self_facts)
         )
-    chat_facts = repo.get_auto_facts("chat", chat_id, 3)
+    chat_facts = [
+        f for f in repo.get_auto_facts("chat", chat_id, 3) if relevant(f["fact_text"])
+    ]
     if chat_facts:
         notes.append(
             "Подмечено в чате: " + "; ".join(f["fact_text"][:100] for f in chat_facts)
         )
-    phrases = repo.get_top_chat_phrases(chat_id, 3)
-    if phrases:
-        notes.append("Частые темы: " + ", ".join(p["phrase"][:60] for p in phrases))
     return notes, False
 
 
 async def dialogue_notes(
     db: Database, message: Message, text: str, *, include_kents: bool
 ):
-    reply = message.reply_to_message
-    replied = reply.from_user.id if reply and reply.from_user else None
     return await db.run(
-        _collect, message.from_user.id, message.chat.id, replied, text, include_kents
+        _collect, message.from_user.id, message.chat.id, text, include_kents
     )

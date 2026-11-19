@@ -110,8 +110,8 @@ class SelfFactIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 await db.run(Repository.get_self_facts, user_id, user_id), []
             )
-            group_notes, _ = await db.run(_collect, user_id, chat_id, None, "", True)
-            other_notes, _ = await db.run(_collect, user_id, -1002, None, "", True)
+            group_notes, _ = await db.run(_collect, user_id, chat_id, "", True)
+            other_notes, _ = await db.run(_collect, user_id, -1002, "", True)
             self.assertIn("RTX 3070", " ".join(group_notes))
             self.assertNotIn("Старый автофакт", " ".join(group_notes))
             self.assertNotIn("RTX 3070", " ".join(other_notes))
