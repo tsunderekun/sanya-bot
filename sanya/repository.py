@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 from .config import MAX_CONTEXT_CHARS, MAX_HISTORY, TOP_STICKERS_CHANCE
 from .lore import DEFAULT_STICKER_PACKS, INITIAL_KENTS_PROFILES
-from .observations import self_fact_prefix
+from .observations import SELF_FACT_PREFIX, self_fact_prefix
 
 
 class AmbiguousUsername(ValueError):
@@ -798,7 +798,7 @@ class Repository:
         """
         Удаляет сообщения пользователя из базы данных.
         Если delete_profile=False:
-            Удаляются только сообщения из messages, профиль и persona_notes сохраняются
+            Удаляются сообщения и тихие самоописания, профиль и persona_notes сохраняются
             (сбрасывается только счетчик сообщений message_count = 0).
         Если delete_profile=True (только по подтвержденному решению админа):
             Удаляются и сообщения, и профиль из user_profiles.
@@ -810,6 +810,12 @@ class Repository:
                 )
                 deleted_messages = cur_msg.rowcount
 
+                if not delete_profile:
+                    conn.execute(
+                        "DELETE FROM auto_observed_facts WHERE entity_type='user' "
+                        "AND entity_id=? AND substr(fact_key, 1, ?) = ?",
+                        (user_id, len(SELF_FACT_PREFIX), SELF_FACT_PREFIX),
+                    )
                 if delete_profile:
                     conn.execute(
                         "DELETE FROM auto_observed_facts WHERE entity_type='user' AND entity_id=?",

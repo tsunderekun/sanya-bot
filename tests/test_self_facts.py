@@ -21,6 +21,9 @@ class SelfFactParserTests(unittest.TestCase):
             "Купила себе Galaxy S23 Ultra!": {"device"},
             "Поставил себе Windows 11": {"os"},
             "Играю в CS 1.6.": {"game"},
+            "Люблю кофе": {"preference:кофе"},
+            "Я ненавижу пиццу с ананасами!": {"preference:ананасы в пицце"},
+            "Предпочитаю Debian": {"preference:debian"},
         }
         for text, expected in samples.items():
             with self.subTest(text=text):
@@ -40,6 +43,12 @@ class SelfFactParserTests(unittest.TestCase):
             "/setkent у меня RTX 3070",
             "У меня RTX 3070\nу друга RX 570",
             "Я работаю в компании",
+            "Люблю кофе?",
+            "Люблю кофе, а вот друг — нет",
+            "Он любит кофе",
+            "Не знаю, люблю ли я кофе",
+            "Ненавижу @somebody",
+            "Люблю кофе у себя на улице X",
         ):
             with self.subTest(text=text):
                 self.assertEqual(extract_self_facts(text), ())
@@ -82,6 +91,8 @@ class SelfFactIntegrationTests(unittest.IsolatedAsyncioTestCase):
             requests = SimpleNamespace(enqueue=AsyncMock())
             with patch("sanya.handlers.chat.try_react_whale", AsyncMock()) as react:
                 await handle_message(message, bot, db, requests)
+                message.text, message.message_id = "Ненавижу пиццу с ананасами", 2
+                await handle_message(message, bot, db, requests)
                 react.assert_not_awaited()
                 requests.enqueue.assert_not_awaited()
                 message.chat = SimpleNamespace(id=user_id, type=ChatType.PRIVATE)
@@ -103,9 +114,9 @@ class SelfFactIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await db.run(Repository.get_kent_fact_entries, user_id), []
             )
             facts = await db.run(Repository.get_self_facts, chat_id, user_id)
-            self.assertEqual(
+            self.assertCountEqual(
                 [(f["fact_text"], f["mention_count"]) for f in facts],
-                [("Видеокарта: RTX 3070", 1)],
+                [("Видеокарта: RTX 3070", 1), ("Ненавидит: ананасы в пицце", 1)],
             )
             self.assertEqual(
                 await db.run(Repository.get_self_facts, user_id, user_id), []
@@ -115,3 +126,24 @@ class SelfFactIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("RTX 3070", " ".join(group_notes))
             self.assertNotIn("Старый автофакт", " ".join(group_notes))
             self.assertNotIn("RTX 3070", " ".join(other_notes))
+
+    async def test_preference_updates_and_forget_keeps_manual_lore(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        async with Database(root / "memory.db") as db:
+            for text in ("Люблю кофе", "Не люблю кофе"):
+                await db.run(
+                    Repository.record_self_facts, -1001, 42, extract_self_facts(text)
+                )
+            await db.run(Repository.add_kent_fact_entry, 42, "Играет в шахматы")
+            notes, grounded = await db.run(_collect, 42, -1001, "Что я люблю?", True)
+            self.assertTrue(grounded)
+            self.assertIn("Не любит: кофе", " ".join(notes))
+            for chat, user in ((-1002, 42), (-1001, 43), (42, 42)):
+                notes, _ = await db.run(_collect, user, chat, "Что я люблю?", True)
+                self.assertEqual(notes, [])
+            await db.run(Repository.clear_user_data, 42)
+            self.assertEqual(await db.run(Repository.get_self_facts, -1001, 42), [])
+            self.assertEqual(
+                (await db.run(Repository.get_kent_fact_entries, 42))[0]["content"],
+                "Играет в шахматы",
+            )

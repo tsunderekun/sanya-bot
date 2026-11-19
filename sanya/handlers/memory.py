@@ -81,7 +81,7 @@ async def cmd_forgetme(message: types.Message, db: Database):
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="🗑 Только сообщения",
+                        text="🗑 Сообщения и тихие факты",
                         callback_data=f"forget:msgs:{target_id}:{caller_id}",
                     ),
                     InlineKeyboardButton(
@@ -103,15 +103,15 @@ async def cmd_forgetme(message: types.Message, db: Database):
             prompt_text = (
                 f"слышь, <b>{safe_target_name}</b>, ты ж наш кент!\n"
                 f"твой статус кента и лор в базе защищены от удаления намертво.\n"
-                f"но могу подчистить твои сообщения из чата. сносим сообщения?"
+                f"но могу подчистить твои сообщения из базы и тихую память. Сносим?"
             )
         else:
-            prompt_text = f"слышь, <b>{safe_target_name}</b>, реально подчистить твои сообщения из базы?"
+            prompt_text = f"слышь, <b>{safe_target_name}</b>, подчистить твои сообщения из базы и тихую память?"
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="🗑 Да, снести сообщения",
+                        text="🗑 Да, снести сообщения и тихие факты",
                         callback_data=f"forget:msgs:{target_id}:{caller_id}",
                     ),
                     InlineKeyboardButton(
@@ -190,12 +190,12 @@ async def cb_forgetme(query: CallbackQuery, db: Database):
         await query.answer("Сообщения подчищены")
         if target_id == clicker_id:
             res_text = (
-                f"Сообщения твои подчистил ({deleted_msgs} шт).\n"
+                f"Сообщения твои подчистил ({deleted_msgs} шт), тихие факты удалил.\n"
                 f"Профиль и статус кента в базе не трогал, всё на месте железобетонно."
             )
         else:
             res_text = (
-                f"Сообщения пользователя <code>{target_id}</code> подчищены ({deleted_msgs} шт).\n"
+                f"Сообщения пользователя <code>{target_id}</code> подчищены ({deleted_msgs} шт), тихие факты удалены.\n"
                 f"Профиль и статус кента сохранены."
             )
         await query.message.edit_text(res_text, reply_markup=None, parse_mode="HTML")

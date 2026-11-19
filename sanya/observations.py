@@ -3,9 +3,11 @@ import re
 from aiogram.enums import MessageEntityType
 from aiogram.types import Message
 
+SELF_FACT_PREFIX = "self_report:"
+
 
 def self_fact_prefix(chat_id: int) -> str:
-    return f"self_report:{chat_id}:"
+    return f"{SELF_FACT_PREFIX}{chat_id}:"
 
 
 _GPU = r"(?:rtx\s*\d{4}(?:\s*ti)?(?:\s*super)?|gtx\s*\d{3,4}(?:\s*ti)?|rx\s*\d{3,4}(?:\s*xtx?)?|arc\s*[ab]\d{3})"
@@ -32,6 +34,29 @@ _SETUP = re.compile(
     re.I,
 )
 _PLAY = re.compile(r"(?:я\s+)?(?:играю|катаю|гоняю)\s+в\s+(.+)", re.I)
+_PREFERENCE = re.compile(
+    r"(?:я\s+)?(не\s+люблю|ненавижу|терпеть\s+не\s+могу|люблю|обожаю|предпочитаю)\s+(.+)",
+    re.I,
+)
+# Match complete, non-sensitive topics rather than storing arbitrary free text.
+_PREFERENCE_TOPICS = tuple(
+    (re.compile(pattern), label)
+    for pattern, label in (
+        (r"кофе", "кофе"),
+        (r"ча[йя]", "чай"),
+        (r"пицц[ау]", "пиццу"),
+        (r"суши", "суши"),
+        (r"роллы", "роллы"),
+        (r"гречк[ау]", "гречку"),
+        (r"ананасы", "ананасы"),
+        (r"ананасы\s+в\s+пицце|пиццу\s+с\s+ананасами", "ананасы в пицце"),
+        (r"рыбалк[ау]", "рыбалку"),
+        (r"футбол", "футбол"),
+        (r"настолки|настольные игры", "настольные игры"),
+        (r"аниме", "аниме"),
+    )
+)
+_GAME_VALUE = re.compile(_GAME, re.I)
 _SEPARATOR = re.compile(r"\s*(?:[,+]|\s+и\s+)\s*", re.I)
 _QUOTE_ENTITIES = {
     MessageEntityType.BLOCKQUOTE,
@@ -47,6 +72,35 @@ def extract_self_facts(text: str) -> tuple[tuple[str, str], ...]:
     if not text or len(text) > 180 or any(c in text for c in "\r\n?？"):
         return ()
     text = text.removesuffix(".").removesuffix("!").strip()
+    if preference := _PREFERENCE.fullmatch(text):
+        verb, subject = (
+            " ".join(part.casefold().split()) for part in preference.groups()
+        )
+        topic = subject.removeprefix("играть в ")
+        if _GAME_VALUE.fullmatch(topic) or any(
+            pattern.fullmatch(topic) for pattern, key, _ in _MODELS if key != "game"
+        ):
+            label = topic
+        else:
+            label = next(
+                (
+                    label
+                    for pattern, label in _PREFERENCE_TOPICS
+                    if pattern.fullmatch(subject)
+                ),
+                None,
+            )
+        if not label:
+            return ()
+        sentiment = {
+            "не люблю": "Не любит",
+            "ненавижу": "Ненавидит",
+            "терпеть не могу": "Терпеть не может",
+            "люблю": "Любит",
+            "обожаю": "Обожает",
+            "предпочитаю": "Предпочитает",
+        }[verb]
+        return ((f"preference:{label}", f"{sentiment}: {label}"),)
     play = _PLAY.fullmatch(text)
     match = play or _SETUP.fullmatch(text)
     if not match:
