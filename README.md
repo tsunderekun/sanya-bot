@@ -89,7 +89,7 @@ systemctl --user enable --now sanya-bot.service
 journalctl --user -u sanya-bot.service -f
 ```
 
-Код бота находится в `sanya/`, тесты — в `tests/`. Диалоги и настройки хранятся в SQLite; перед работой с существующей базой см. [MIGRATION.md](MIGRATION.md) и [BOT_HANDOFF.md](BOT_HANDOFF.md).
+Код бота находится в `sanya/`, тесты — в `tests/`. Диалоги и настройки хранятся в SQLite; перед обновлением существующей базы сделай резервную копию через SQLite Backup API.
 
 ```bash
 python -m unittest discover -s tests -q
