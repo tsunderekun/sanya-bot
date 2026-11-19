@@ -37,6 +37,13 @@ _SAFE_RATINGS = {
     "Rule34": {"safe", "s", "general", "g"},
 }
 _SAFE = {"safe", "general"}
+_IDEA_BLOCKED_TAG = re.compile(
+    r"(?:^|[ _-])(?:child|children|minor|minors|underage|loli|lolicon|shota|shotacon|"
+    r"toddler|infant|baby|kid|kids|schoolgirl|schoolboy|teen|young|"
+    r"ignore|instructions?|system|prompt|override|rules?|safety|developer|assistant|"
+    r"jailbreak|forget|disregard)(?:$|[ _-])",
+    re.I,
+)
 _RATING_SYNTAX = r"rating:(general|safe|suggestive|questionable|explicit|semi-grimdark|grimdark|grotesque|g|s|q|e)"
 _RATING_ALIASES = {"g": "general", "s": "safe", "q": "questionable", "e": "explicit"}
 
@@ -256,6 +263,49 @@ async def _candidates(
         if isinstance(url, str) and _allowed_url(url, source):
             candidates.append((f"{source}:{post['id']}", url, source))
     return candidates
+
+
+async def search_aibooru_idea_tags(*, limit: int = 30) -> list[str]:
+    """Fetch only tag metadata; never download or expose an image."""
+    async with httpx.AsyncClient(
+        timeout=5,
+        follow_redirects=False,
+        headers={"User-Agent": "SanyaTelegramBot/1.0 (Telegram: @ponyeb228_bot)"},
+        **({"proxy": SEARCH_PROXY} if SEARCH_PROXY else {}),
+    ) as client:
+
+        async def page(number):
+            try:
+                response = await client.get(
+                    "https://aibooru.online/tags.json",
+                    params={"search[order]": "count", "limit": limit, "page": number},
+                )
+                response.raise_for_status()
+                payload = response.json()
+            except (httpx.HTTPError, ValueError, TypeError, KeyError):
+                return []
+            if not isinstance(payload, list):
+                return []
+            tags = []
+            for entry in payload:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name")
+                count = entry.get("post_count", entry.get("count", 0))
+                if (
+                    isinstance(name, str)
+                    and re.fullmatch(r"[\w ()'-]{2,64}", name)
+                    and not name.startswith("-")
+                    and not _IDEA_BLOCKED_TAG.search(name)
+                    and len(name.split()) <= 4
+                    and isinstance(count, int)
+                    and count > 0
+                ):
+                    tags.append(name.replace("_", " "))
+            return tags
+
+        results = await asyncio.gather(page(1), page(2))
+    return list(dict.fromkeys(tag for group in results for tag in group))
 
 
 class BooruUnavailable(Exception):

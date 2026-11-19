@@ -20,6 +20,7 @@ class Request:
     booru_confirmed: bool = False
     slop: bool = False
     force_generation: tuple[Mode, str] | None = None
+    prompt_idea: bool = False
 
 
 class RequestQueue:
@@ -72,6 +73,7 @@ class RequestQueue:
                         if item.force_price_query
                         else {}
                     ),
+                    **({"prompt_idea": True} if item.prompt_idea else {}),
                 )
             except Exception:
                 logging.exception("Ошибка обработки сообщения из очереди")

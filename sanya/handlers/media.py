@@ -4,7 +4,13 @@ from aiogram import F, Router, types
 from aiogram.filters import Command
 
 from ..intent import Mode
-from ..services.booru_confirmation import PREFIX, confirm_booru
+from ..services.booru_confirmation import (
+    IDEA_PREFIX,
+    PREFIX,
+    ask_prompt_idea_confirmation,
+    confirm_booru,
+    confirm_prompt_idea,
+)
 from ..services.queue import RequestQueue
 from ..services.stickers import try_react_whale
 from .command_args import command_args
@@ -60,7 +66,9 @@ async def cmd_slop(message: types.Message, requests: RequestQueue):
 async def cmd_code(message: types.Message, requests: RequestQueue):
     args = command_args(message)
     if not args:
-        await message.reply("Напиши задачу после команды: /код Python, убрать дубли из списка")
+        await message.reply(
+            "Напиши задачу после команды: /код Python, убрать дубли из списка"
+        )
         return
     await enqueue_command(message, requests, force_generation=(Mode.CODE, args))
 
@@ -68,17 +76,25 @@ async def cmd_code(message: types.Message, requests: RequestQueue):
 async def cmd_prompt(message: types.Message, requests: RequestQueue):
     args = command_args(message)
     if not args:
-        await message.reply("Опиши картинку после команды: /промпт пони ждёт трамвай ночью, акварель")
+        await message.reply(
+            "Опиши картинку после команды: /промпт пони ждёт трамвай ночью, акварель"
+        )
         return
     await enqueue_command(message, requests, force_generation=(Mode.PROMPT, args))
+
+
+async def cmd_prompt_idea(message: types.Message):
+    await ask_prompt_idea_confirmation(message)
 
 
 def make_router() -> Router:
     router = Router(name=__name__)
     router.callback_query.register(confirm_booru, F.data.startswith(PREFIX))
+    router.callback_query.register(confirm_prompt_idea, F.data.startswith(IDEA_PREFIX))
     router.message.register(cmd_slop, Command("slop", "слоп"))
     router.message.register(cmd_code, Command("code", "код"))
     router.message.register(cmd_prompt, Command("prompt", "промпт"))
+    router.message.register(cmd_prompt_idea, Command("promptidea", "идея"))
     router.message.register(
         cmd_search,
         Command("search", "s", "поиск", "гугл", "найти", "гугли", "ищи", "с"),

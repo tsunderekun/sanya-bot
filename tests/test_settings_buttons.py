@@ -186,9 +186,11 @@ class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertIn("forgetme", private)
+        self.assertIn("promptidea", private)
         self.assertNotIn("all", private)
         self.assertNotIn("setkent", group)
         self.assertIn("all", group)
+        self.assertIn("promptidea", group)
         self.assertIn("setkent", admins)
         self.assertTrue(set(group) <= set(admins))
 

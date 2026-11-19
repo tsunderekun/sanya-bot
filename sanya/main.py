@@ -125,7 +125,10 @@ async def register_commands(bot: Bot):
             BotCommand(command="slop", description="Поиск артов на AIBooru"),
             BotCommand(command="code", description="Написать код по задаче"),
             BotCommand(command="prompt", description="Написать промпт для картинки"),
-            BotCommand(command="facts", description="Посмотреть свои сохранённые факты"),
+            BotCommand(command="promptidea", description="Предложить идею для промпта"),
+            BotCommand(
+                command="facts", description="Посмотреть свои сохранённые факты"
+            ),
             BotCommand(
                 command="clear",
                 description="Очистить историю чата (в группе — админ)",
@@ -140,8 +143,27 @@ async def register_commands(bot: Bot):
             ),
         ]
     }
-    common = ("help", "pic", "meme", "code", "prompt", "booru", "slop")
-    group = ("help", "all", "meme", "pic", "code", "prompt", "settings", "dict")
+    common = (
+        "help",
+        "pic",
+        "meme",
+        "code",
+        "prompt",
+        "promptidea",
+        "booru",
+        "slop",
+    )
+    group = (
+        "help",
+        "all",
+        "meme",
+        "pic",
+        "code",
+        "prompt",
+        "promptidea",
+        "settings",
+        "dict",
+    )
     menus = (
         (BotCommandScopeDefault(), common),
         (BotCommandScopeAllPrivateChats(), (*common, "settings", "facts", "forgetme")),
