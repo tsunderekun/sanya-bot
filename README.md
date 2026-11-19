@@ -1,5 +1,11 @@
 # Саня Пониёб — Telegram-бот
 
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![aiogram 3.x](https://img.shields.io/badge/aiogram-3.x-2CA5E0.svg)](https://docs.aiogram.dev/)
+[![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-orange.svg)](https://ollama.com/)
+[![SQLite](https://img.shields.io/badge/Database-SQLite_WAL-003B57.svg)](https://www.sqlite.org/)
+[![Лицензия: MIT](https://img.shields.io/badge/License-MIT-green.svg)](#лицензия)
+
 [@ponyeb228_bot](https://t.me/ponyeb228_bot) — бот для дружеских чатов. Болтает, помогает с железом, ищет картинки и мемы, помнит лор конкретной конфы. В группе его можно позвать словом «Спермер», точным упоминанием `@ponyeb228_bot`, реплаем на его сообщение или командой. «Саня» и `@ponyeb228` бота не зовут.
 
 ## Команды
@@ -68,3 +74,7 @@ journalctl --user -u sanya-bot.service -f
 python -m unittest discover -s tests -q
 python -m ruff check sanya tests update_kents_db.py --select F,I
 ```
+
+## Лицензия
+
+Заявленная лицензия проекта — [MIT](https://opensource.org/license/mit). Отдельного файла `LICENSE` с текстом лицензии и уведомлением об авторских правах в репозитории пока нет.
