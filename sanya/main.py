@@ -51,6 +51,9 @@ async def main():
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    # Rule34 authenticates in the query string; HTTPX's request log includes it.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     if os.getenv("LOG_OLLAMA_THINKING", "").lower() in ("1", "true", "yes"):
         logging.getLogger("sanya.thinking").setLevel(logging.DEBUG)
     session = AiohttpSession(proxy=TELEGRAM_PROXY or None)

@@ -35,6 +35,8 @@ ENABLE_THINKING = os.getenv("ENABLE_THINKING", "true").lower() in ("1", "true", 
 NUM_PREDICT_THINK = int(os.getenv("NUM_PREDICT_THINK", "1500"))
 TELEGRAM_PROXY = os.getenv("TELEGRAM_PROXY", "")
 SEARCH_PROXY = os.getenv("SEARCH_PROXY", TELEGRAM_PROXY)
+RULE34_USER_ID = os.getenv("RULE34_USER_ID", "").strip()
+RULE34_API_KEY = os.getenv("RULE34_API_KEY", "").strip()
 ENABLE_WEB_SEARCH = os.getenv("ENABLE_WEB_SEARCH", "true").lower() in (
     "1",
     "true",

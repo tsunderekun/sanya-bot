@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from ..config import RULE34_API_KEY, RULE34_USER_ID
 from .media import PONY_TAG_SYNONYMS
 
 SINGLE_TAG_HINT = "Слышь, накинь ещё тегов через запятую: например solo, cute, safe."
@@ -22,17 +23,47 @@ _RATINGS = frozenset(
     }
 )
 _MAX_BYTES = 9_000_000
+_FRANCHISE_ALIASES = {"mlp", "млп", "май литл пони", "мой маленький пони"}
+_PONY_MENTION = re.compile(r"(?<![^\W_])(?:pony|ponies|mlp|млп|пони)(?![^\W_])")
+_PONY_CHARACTERS = frozenset(PONY_TAG_SYNONYMS.values())
+_SAFE_RATINGS = {
+    "Gelbooru": {"general", "g"},
+    "Konachan": {"safe", "s"},
+    "e621": {"s"},
+    "Rule34": {"safe", "s", "general", "g"},
+}
+
+
+def _normalize_tag(tag: str) -> str:
+    spaced = " ".join(tag.replace("_", " ").split())
+    if spaced in _FRANCHISE_ALIASES:
+        return "my little pony"
+    if spaced in PONY_TAG_SYNONYMS:
+        return PONY_TAG_SYNONYMS[spaced]
+    if spaced in _PONY_CHARACTERS or _PONY_MENTION.search(spaced):
+        return spaced
+    return tag
+
+
+def _sources(tags: list[str]) -> tuple[str, ...]:
+    if any(_PONY_MENTION.search(tag) or tag in _PONY_CHARACTERS for tag in tags):
+        return ("Derpibooru",)
+    sources = ("Gelbooru", "Konachan", "e621")
+    if RULE34_API_KEY and RULE34_USER_ID.isascii() and RULE34_USER_ID.isdecimal():
+        sources += ("Rule34",)
+    return sources
 
 
 def parse_tags(query: str) -> tuple[list[str], bool]:
     query = re.sub(
-        r"\b(?:booru|r34|rule34|derpi|буру|р34|дерпи)\b\s*",
+        r"^\s*/(?:booru|r34|rule34|derpi|буру|р34|дерпи)(?:@\w+)?(?=\s|$)\s*",
         "",
         query[:400],
         flags=re.IGNORECASE,
     )
+    query = re.sub(r"\b(?:booru|r34|rule34|derpi|буру|р34)\b\s*", "", query, flags=re.I)
     parts = [
-        PONY_TAG_SYNONYMS.get(tag, tag)
+        _normalize_tag(tag)
         for part in query.casefold().split(",")
         if (tag := " ".join(part.split()))
     ]
@@ -47,6 +78,8 @@ def _allowed_url(url: str, source: str) -> bool:
             "Derpibooru": "derpicdn.net",
             "Gelbooru": "gelbooru.com",
             "Konachan": "konachan.net",
+            "e621": "e621.net",
+            "Rule34": "rule34.xxx",
         }[source]
         return (
             parsed.scheme == "https"
@@ -83,25 +116,41 @@ async def _candidates(
         ]
         if len(query) != len(common):
             return []
-        query.append("rating:general" if source == "Gelbooru" else "rating:safe")
+        query.append(
+            {"Gelbooru": "rating:general", "e621": "rating:s"}.get(
+                source, "rating:safe"
+            )
+        )
         if single:
             query.append("score:>25")
         params = {"tags": " ".join(query), "limit": size}
-        if source == "Gelbooru":
+        if source in {"Gelbooru", "Rule34"}:
             params.update(page="dapi", s="post", q="index", json=1, pid=page - 1)
-            response = await client.get("https://gelbooru.com/index.php", params=params)
+            url = "https://gelbooru.com/index.php"
+            if source == "Rule34":
+                url = "https://api.rule34.xxx/index.php"
+                params.update(user_id=RULE34_USER_ID, api_key=RULE34_API_KEY)
+            response = await client.get(url, params=params)
             response.raise_for_status()
             payload = response.json()
             posts = payload.get("post", []) if isinstance(payload, dict) else payload
+        elif source == "e621":
+            response = await client.get(
+                "https://e621.net/posts.json", params={**params, "page": page}
+            )
+            response.raise_for_status()
+            posts = response.json().get("posts", [])
         else:
             response = await client.get(
                 "https://konachan.net/post.json", params={**params, "page": page}
             )
             response.raise_for_status()
             posts = response.json()
+    if not isinstance(posts, list):
+        return []
     candidates = []
     for post in posts[:size]:
-        if not isinstance(post, dict) or not str(post.get("id", "")).isdigit():
+        if not isinstance(post, dict) or not str(post.get("id", "")).isdecimal():
             continue
         if source == "Derpibooru":
             if safe and "safe" not in (post.get("tags") or []):
@@ -109,14 +158,19 @@ async def _candidates(
             images = post.get("representations") or {}
             url = images.get("large") or images.get("medium") or post.get("view_url")
         else:
-            if post.get("rating") not in (
-                {"general", "g"} if source == "Gelbooru" else {"s", "safe"}
-            ):
+            if post.get("rating") not in _SAFE_RATINGS[source]:
                 continue
-            url = post.get("sample_url") or post.get("file_url")
+            if source == "e621":
+                url = (post.get("sample") or {}).get("url") or (
+                    post.get("file") or {}
+                ).get("url")
+            else:
+                url = post.get("sample_url") or post.get("file_url")
+        score = post.get("score", "")
+        if source == "e621" and isinstance(score, dict):
+            score = score.get("total", "")
         if single and (
-            not str(post.get("score", "")).lstrip("-").isdigit()
-            or int(post["score"]) <= 25
+            not str(score).removeprefix("-").isdecimal() or int(score) <= 25
         ):
             continue
         if isinstance(url, str) and _allowed_url(url, source):
@@ -133,7 +187,7 @@ async def search_and_download_booru_image(
     async with httpx.AsyncClient(
         timeout=5,
         follow_redirects=False,
-        headers={"User-Agent": "SanyaTelegramBot/1.0"},
+        headers={"User-Agent": "SanyaTelegramBot/1.0 (Telegram: @ponyeb228_bot)"},
     ) as client:
 
         async def fetch(source, page):
@@ -144,7 +198,7 @@ async def search_and_download_booru_image(
             except (httpx.HTTPError, ValueError, TypeError, AttributeError, KeyError):
                 return []
 
-        sources = ("Derpibooru", "Gelbooru", "Konachan")
+        sources = _sources(tags)
         attempted = set(seen)
 
         async def search():
