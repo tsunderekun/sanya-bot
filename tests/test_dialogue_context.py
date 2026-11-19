@@ -67,6 +67,8 @@ class DialogueContextTests(unittest.IsolatedAsyncioTestCase):
         llm = SimpleNamespace(generate=AsyncMock(return_value="Медный кактус"))
         with (
             patch("sanya.services.chat.keep_typing", AsyncMock()),
+            patch("sanya.services.chat.ENABLE_WEB_SEARCH", True),
+            patch("sanya.services.chat.perform_web_search", AsyncMock()) as search,
             patch(
                 "sanya.services.chat.send_burst_messages", AsyncMock(return_value=[5])
             ) as send,
@@ -76,6 +78,11 @@ class DialogueContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Исходный вопрос: Кодовое слово — медный кактус", prompt)
         self.assertNotIn("синий чайник", prompt)
         self.assertFalse(llm.generate.await_args.kwargs["is_coding_request"])
+        self.assertIn(
+            "Это вопрос о сказанном в этом диалоге",
+            llm.generate.await_args.kwargs["system_prompt"],
+        )
+        search.assert_not_awaited()
         self.assertEqual(send.await_args.args[3], "Медный кактус")
 
     async def test_interleaved_users_and_chats_are_isolated_in_model_prompt(self):

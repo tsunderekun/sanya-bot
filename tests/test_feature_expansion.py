@@ -83,7 +83,7 @@ class FeatureTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     request.url.params["q"], "fluttershy, safe, score.gt:25"
                 )
-                self.assertEqual(request.url.params["page"], "3")
+                self.assertIn(request.url.params["page"], {"3", "1"})
                 return httpx.Response(
                     200,
                     json={

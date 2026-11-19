@@ -37,6 +37,7 @@ from ..repository import Repository
 from ..vocabulary import custom_definition, select_words
 from .booru import (
     SINGLE_TAG_HINT,
+    BooruUnavailable,
     requires_confirmation,
     search_and_download_booru_image,
 )
@@ -67,6 +68,12 @@ _CODE_ONLY = re.compile(
     r"\b(?:только\s+код|без\s+(?:пояснений|вступления|комментариев\s+вне\s+кода)|"
     r"одним\s+(?:кодовым\s+)?блоком|в\s+одном\s+(?:кодовом\s+)?блоке|"
     r"(?:just|only)\s+(?:the\s+)?code|(?:one|a single)\s+code\s+block)\b",
+    re.I,
+)
+_DIALOGUE_RECALL = re.compile(
+    r"\b(?:что|како[йеяую]|какие)\b[^\n?!]{0,100}\b(?:я\s+тебе\s+"
+    r"(?:назвал[аи]?|говорил[аи]?|сказал[аи]?|писал[аи]?|прислал[аи]?)|"
+    r"был[оиа]?\s+в\s+(?:мо[её]м\s+)?сообщении|я\s+(?:назвал[аи]?|сказал[аи]?)\s+раньше)\b",
     re.I,
 )
 
@@ -249,12 +256,13 @@ async def process_chat_message(
                     message, booru_search_query, **({"slop": True} if slop else {})
                 )
             return
-        logging.info(
-            f"[{message.chat.id}] Поиск Booru/R34 арта по запросу: '{booru_search_query}'"
-        )
+        logging.info("Booru search started slop=%s", slop)
         stop_typing = asyncio.Event()
         typing_task = asyncio.create_task(
             keep_typing(bot, message.chat.id, stop_typing)
+        )
+        failure = (
+            "Свежего арта по этим тегам не нашёл. Попробуй уточнить теги через запятую."
         )
         try:
             seen = await db.run(Repository.recent_booru_ids, message.chat.id)
@@ -338,14 +346,20 @@ async def process_chat_message(
                         )
                     return
                 except Exception as e:
-                    logging.error(f"Ошибка отправки Booru фото пользователю: {e}")
+                    logging.error("Booru delivery failed: %s", type(e).__name__)
+                    failure = "Картинку скачал, но не смог отправить в Telegram. Попробуй ещё раз."
+        except BooruUnavailable as exc:
+            logging.warning("Booru unavailable stage=%s slop=%s", exc.stage, slop)
+            failure = (
+                "Нашёл подходящие посты, но не смог скачать картинку. Попробуй чуть позже."
+                if exc.stage == "download"
+                else "Не удалось получить ответ от источников. Попробуй чуть позже."
+            )
         finally:
             stop_typing.set()
             typing_task.cancel()
             await asyncio.gather(typing_task, return_exceptions=True)
-        await message.reply(
-            "Свежего арта по этим тегам не нашёл. Попробуй уточнить теги через запятую."
-        )
+        await message.reply(failure)
         return
 
     # 1.2 Обычный поиск картинок
@@ -603,7 +617,12 @@ async def process_chat_message(
             rofl = False
             await send_answer(definition)
             return
-    can_search = may_search(mode, enabled=ENABLE_WEB_SEARCH, insult=insult)
+    recall = plain_chat and bool(_DIALOGUE_RECALL.search(model_text))
+    if recall:
+        rofl = False
+    can_search = not recall and may_search(
+        mode, enabled=ENABLE_WEB_SEARCH, insult=insult
+    )
     search_query = (
         (force_search_query or (explicit[1] if explicit else "")) if can_search else ""
     )
@@ -670,6 +689,13 @@ async def process_chat_message(
         elif is_called_by_name or is_mentioned:
             directives.append(
                 "Тебя позвали. Ответь на сам вопрос, не обсуждай обращение и не представляйся без запроса."
+            )
+        if recall:
+            directives.append(
+                "Это вопрос о сказанном в этом диалоге. Найди ответ в репликах собеседника "
+                "или в исходном сообщении реплая, не в старых ответах Сани. "
+                "Ответь коротко и прямо, без подколов, даже если вопрос повторили. "
+                "Если нужной реплики нет, скажи, что не видишь её в этом диалоге. Не угадывай."
             )
         code_only = mode is Mode.CODE and bool(_CODE_ONLY.search(query_text))
         if code_only:

@@ -7,6 +7,54 @@ from sanya.services import booru
 
 
 class BooruSourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_slow_random_page_does_not_block_first_page_download(self):
+        def respond(request):
+            if request.url.host == "wimg.rule34.xxx":
+                if request.url.path == "/3.jpg":
+                    raise httpx.ReadTimeout("slow", request=request)
+                return httpx.Response(
+                    200, content=b"photo", headers={"Content-Type": "image/jpeg"}
+                )
+            post = 3 if request.url.params["pid"] == "2" else 1
+            return httpx.Response(
+                200,
+                json=[{"id": post, "file_url": f"https://wimg.rule34.xxx/{post}.jpg"}],
+            )
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        with (
+            patch.object(booru, "_sources", return_value=("Rule34",)),
+            patch.object(booru.random, "randint", return_value=3),
+            patch.object(booru.httpx, "AsyncClient", return_value=client),
+        ):
+            result = await booru.search_and_download_booru_image(
+                "scenery, landscape", seen=set(), confirmed=True
+            )
+        self.assertEqual(result[2:4], ("Rule34", "Rule34:1"))
+
+    async def test_distinguishes_source_and_download_failure(self):
+        for stage in ("search", "download"):
+
+            def respond(request):
+                if stage == "search":
+                    return httpx.Response(503)
+                if request.url.host == "wimg.rule34.xxx":
+                    raise httpx.ReadTimeout("slow", request=request)
+                return httpx.Response(
+                    200, json=[{"id": 1, "file_url": "https://wimg.rule34.xxx/1.jpg"}]
+                )
+
+            client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+            with (
+                patch.object(booru, "_sources", return_value=("Rule34",)),
+                patch.object(booru.httpx, "AsyncClient", return_value=client),
+                self.assertRaises(booru.BooruUnavailable) as error,
+            ):
+                await booru.search_and_download_booru_image(
+                    "scenery, landscape", seen=set(), confirmed=True
+                )
+            self.assertEqual(error.exception.stage, stage)
+
     async def test_slop_uses_only_aibooru_and_checks_rating_and_cdn(self):
         for query, confirmed, suffix, chosen in (
             ("pony, solo, general", False, " rating:g", 3),
@@ -46,14 +94,18 @@ class BooruSourceTests(unittest.IsolatedAsyncioTestCase):
             client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
             with (
                 patch.object(booru, "SEARCH_PROXY", "http://proxy.test:8080"),
-                patch.object(booru.httpx, "AsyncClient", return_value=client) as factory,
+                patch.object(
+                    booru.httpx, "AsyncClient", return_value=client
+                ) as factory,
                 patch.object(booru.random, "shuffle"),
             ):
                 result = await booru.search_and_download_booru_image(
                     query, seen=set(), confirmed=confirmed, slop=True
                 )
             self.assertEqual(result[2:4], ("AIBooru", f"AIBooru:{chosen}"))
-            self.assertEqual(factory.call_args.kwargs["proxy"], "http://proxy.test:8080")
+            self.assertEqual(
+                factory.call_args.kwargs["proxy"], "http://proxy.test:8080"
+            )
 
     async def test_pony_queries_only_contact_derpibooru(self):
         for query, expected in (
@@ -77,7 +129,9 @@ class BooruSourceTests(unittest.IsolatedAsyncioTestCase):
                     patch.object(booru, "RULE34_USER_ID", "42"),
                     patch.object(booru, "RULE34_API_KEY", "test-key"),
                     patch.object(booru, "SEARCH_PROXY", "http://proxy.test:8080"),
-                    patch.object(booru.httpx, "AsyncClient", return_value=client) as factory,
+                    patch.object(
+                        booru.httpx, "AsyncClient", return_value=client
+                    ) as factory,
                 ):
                     self.assertIsNone(
                         await booru.search_and_download_booru_image(query, seen=set())
@@ -121,7 +175,7 @@ class BooruSourceTests(unittest.IsolatedAsyncioTestCase):
             if request.url.host == "api.rule34.xxx":
                 self.assertEqual(request.url.params["api_key"], "test-key")
                 self.assertEqual(request.url.params["user_id"], "42")
-                self.assertEqual(request.url.params["pid"], "2")
+                self.assertIn(request.url.params["pid"], {"2", "0"})
                 self.assertEqual(
                     request.url.params["tags"], "hatsune_miku solo rating:safe"
                 )

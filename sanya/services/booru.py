@@ -1,7 +1,7 @@
 import asyncio
+import logging
 import random
 import re
-from itertools import chain
 from urllib.parse import urlsplit
 
 import httpx
@@ -23,6 +23,9 @@ _RATINGS = frozenset(
     }
 )
 _MAX_BYTES = 9_000_000
+_DOWNLOAD_BATCH = 4
+_DOWNLOAD_TIMEOUT = 3.0
+log = logging.getLogger(__name__)
 _FRANCHISE_ALIASES = {"mlp", "млп", "май литл пони", "мой маленький пони"}
 _PONY_MENTION = re.compile(r"(?<![^\W_])(?:pony|ponies|mlp|млп|пони)(?![^\W_])")
 _PONY_CHARACTERS = frozenset(PONY_TAG_SYNONYMS.values())
@@ -254,6 +257,12 @@ async def _candidates(
     return candidates
 
 
+class BooruUnavailable(Exception):
+    def __init__(self, stage: str):
+        super().__init__(stage)
+        self.stage = stage
+
+
 async def search_and_download_booru_image(
     query: str,
     *,
@@ -283,47 +292,88 @@ async def search_and_download_booru_image(
                     max_candidates,
                     confirmed=confirmed,
                 )
-            except (httpx.HTTPError, ValueError, TypeError, AttributeError, KeyError):
-                return []
+            except (
+                httpx.HTTPError,
+                ValueError,
+                TypeError,
+                AttributeError,
+                KeyError,
+            ) as exc:
+                log.debug(
+                    "Booru source=%s page=%s error=%s", source, page, type(exc).__name__
+                )
+                return None
 
         sources = ("AIBooru",) if slop else _sources(tags)
         attempted = set(seen)
 
+        async def download(image_id, url, source):
+            async with client.stream("GET", url) as response:
+                if response.status_code != 200 or response.headers.get(
+                    "content-type", ""
+                ).split(";")[0] not in {"image/jpeg", "image/png", "image/webp"}:
+                    return None
+                data = bytearray()
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    data.extend(chunk)
+                    if len(data) > _MAX_BYTES:
+                        return None
+                if data:
+                    return bytes(data), url, source, image_id, single
+            return None
+
+        async def try_download(row):
+            try:
+                return await asyncio.wait_for(download(*row), _DOWNLOAD_TIMEOUT)
+            except (httpx.HTTPError, asyncio.TimeoutError):
+                return None
+
+        stage = "search"
+
         async def search():
-            for page in (random.randint(2, 5), 1):
-                candidates = list(
-                    chain.from_iterable(
-                        await asyncio.gather(
-                            *(fetch(source, page) for source in sources)
-                        )
-                    )
+            nonlocal stage
+
+            async def fetch_page(page):
+                return await asyncio.gather(
+                    *(fetch(source, page) for source in sources)
                 )
-                random.shuffle(candidates)
-                for image_id, url, source in candidates:
-                    if image_id in attempted:
-                        continue
-                    attempted.add(image_id)
-                    try:
-                        async with client.stream("GET", url) as response:
-                            if response.status_code != 200 or response.headers.get(
-                                "content-type", ""
-                            ).split(";")[0] not in {
-                                "image/jpeg",
-                                "image/png",
-                                "image/webp",
-                            }:
-                                continue
-                            data = bytearray()
-                            async for chunk in response.aiter_bytes(chunk_size=65536):
-                                data.extend(chunk)
-                                if len(data) > _MAX_BYTES:
-                                    break
-                            if 0 < len(data) <= _MAX_BYTES:
-                                return bytes(data), url, source, image_id, single
-                    except httpx.HTTPError:
-                        continue
+
+            pages = await asyncio.gather(
+                fetch_page(random.randint(2, 5)), fetch_page(1)
+            )
+            candidates = []
+            for batches in pages:
+                page_rows = [row for batch in batches if batch for row in batch]
+                random.shuffle(page_rows)
+                candidates.append(page_rows)
+            # Alternate pages so a slow CDN on the random page can't starve page one.
+            fresh = []
+            for i in range(max(map(len, candidates))):
+                for rows in candidates:
+                    if i < len(rows) and rows[i][0] not in attempted:
+                        attempted.add(rows[i][0])
+                        fresh.append(rows[i])
+            if not fresh:
+                if all(batch is None for page in pages for batch in page):
+                    raise BooruUnavailable("search")
+                return None
+            stage = "download"
+            for offset in range(0, len(fresh), _DOWNLOAD_BATCH):
+                tasks = [
+                    asyncio.create_task(try_download(row))
+                    for row in fresh[offset : offset + _DOWNLOAD_BATCH]
+                ]
+                try:
+                    for task in asyncio.as_completed(tasks):
+                        if result := await task:
+                            return result
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+            raise BooruUnavailable("download")
 
         try:
             return await asyncio.wait_for(search(), timeout=15)
-        except (TimeoutError, asyncio.TimeoutError):  # noqa: UP041 — Python 3.10 compatibility
-            return None
+        except asyncio.TimeoutError as exc:
+            raise BooruUnavailable(stage) from exc
