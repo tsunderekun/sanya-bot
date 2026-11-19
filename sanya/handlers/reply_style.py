@@ -13,6 +13,7 @@ MODE_ARGS = {label: mode for mode, label in MODE_LABELS.items()} | {
     mode: mode for mode in MODE_LABELS
 }
 SETTINGS_PREFIX = "settings:"
+OWNED_CLOSE_PREFIX = SETTINGS_PREFIX + "close:"
 LEVELS = {"tone": ("/тон", TONE_LABELS), "lore": ("/лор", LORE_LABELS)}
 VIEWS = {"all", "mode", "sticker", *LEVELS}
 
@@ -26,6 +27,26 @@ def panel_keyboard(rows):
         text="Закрыть", callback_data=SETTINGS_PREFIX + "close", style="danger"
     )
     return types.InlineKeyboardMarkup(inline_keyboard=[*rows, [close]])
+
+
+def _panel_owner(message: types.Message) -> int | None:
+    if message.reply_markup:
+        for row in message.reply_markup.inline_keyboard:
+            for control in row:
+                data = control.callback_data or ""
+                if data.startswith(OWNED_CLOSE_PREFIX):
+                    owner = data.removeprefix(OWNED_CLOSE_PREFIX)
+                    if owner.isascii() and owner.isdecimal() and len(owner) <= 16:
+                        return int(owner)
+    return None
+
+
+def _with_panel_owner(keyboard: types.InlineKeyboardMarkup, owner: int):
+    for row in keyboard.inline_keyboard:
+        for control in row:
+            if control.callback_data == SETTINGS_PREFIX + "close":
+                control.callback_data = OWNED_CLOSE_PREFIX + str(owner)
+    return keyboard
 
 
 async def settings_view(db: Database, chat_id: int, view: str):
@@ -85,8 +106,12 @@ async def settings_view(db: Database, chat_id: int, view: str):
     return "\n".join(text), panel_keyboard(rows)
 
 
-async def show_settings(message: types.Message, db: Database, view: str = "all"):
+async def show_settings(
+    message: types.Message, db: Database, view: str = "all", *, owner: int | None = None
+):
     text, keyboard = await settings_view(db, message.chat.id, view)
+    if owner is not None:
+        keyboard = _with_panel_owner(keyboard, owner)
     await message.reply(text, reply_markup=keyboard, parse_mode=None)
 
 
@@ -95,6 +120,9 @@ async def cmd_settings(message: types.Message, db: Database):
 
 
 async def edit_panel(message: types.Message, text: str, keyboard):
+    owner = _panel_owner(message)
+    if owner is not None and keyboard is not None:
+        keyboard = _with_panel_owner(keyboard, owner)
     try:
         await message.edit_text(text, reply_markup=keyboard, parse_mode=None)
     except TelegramBadRequest as exc:
@@ -105,9 +133,12 @@ async def edit_panel(message: types.Message, text: str, keyboard):
 async def close_panel(query: types.CallbackQuery, msg: types.Message):
     parent = msg.reply_to_message
     opener = parent.from_user if parent and not parent.sender_chat else None
+    owner = _panel_owner(msg)
+    if owner is None and opener and not opener.is_bot:
+        owner = opener.id
     if (
         msg.chat.type != ChatType.PRIVATE
-        and not (opener and opener.id == query.from_user.id)
+        and owner != query.from_user.id
         and not await check_is_admin(msg.chat, query.from_user.id)
     ):
         await query.answer("Закрыть меню может его автор или админ.", show_alert=True)
@@ -132,12 +163,12 @@ async def update_settings(query: types.CallbackQuery, db: Database):
         await query.answer("Открой /settings заново")
         return
     data = (query.data or "").removeprefix(SETTINGS_PREFIX)
-    if data == "close":
+    if data == "close" or (query.data or "").startswith(OWNED_CLOSE_PREFIX):
         await close_panel(query, msg)
         return
     if data == "open":
         await query.answer()
-        await show_settings(msg, db)
+        await show_settings(msg, db, owner=query.from_user.id)
         return
     navigation = data.removeprefix("view:")
     if data.startswith("view:") and navigation in VIEWS:

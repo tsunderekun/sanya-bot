@@ -47,6 +47,62 @@ class AutomaticStickerTests(unittest.TestCase):
 
 
 class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_settings_opened_from_help_can_be_closed_by_opener_after_navigation(
+        self,
+    ):
+        author = User(id=42, is_bot=False, first_name="Test")
+        outsider = User(id=43, is_bot=False, first_name="Other")
+        bot = User(id=99, is_bot=True, first_name="Bot")
+        chat = Chat(id=-100, type="supergroup")
+        now = datetime.now(timezone.utc)
+        help_message = Message(message_id=1, date=now, chat=chat, from_user=bot)
+        query = SimpleNamespace(
+            message=help_message,
+            from_user=author,
+            data="settings:open",
+            answer=AsyncMock(),
+        )
+        temp = self.enterContext(tempfile.TemporaryDirectory())
+        db = await self.enterAsyncContext(Database(Path(temp) / "settings.sqlite"))
+        with patch.object(Message, "reply", AsyncMock()) as reply:
+            await update_settings(query, db)
+        panel = Message(
+            message_id=2,
+            date=now,
+            chat=chat,
+            from_user=bot,
+            reply_to_message=help_message,
+            reply_markup=reply.await_args.kwargs["reply_markup"],
+        )
+        query.message = panel
+        query.from_user = outsider
+        query.data = "settings:dict"
+        with patch.object(Message, "edit_text", AsyncMock()) as edit:
+            await update_settings(query, db)
+        query.message = panel.model_copy(
+            update={"reply_markup": edit.await_args.kwargs["reply_markup"]}
+        )
+        close = query.message.reply_markup.inline_keyboard[-1][0]
+        self.assertEqual(close.style, "danger")
+        query.data = close.callback_data
+        with (
+            patch(
+                "sanya.handlers.reply_style.check_is_admin",
+                AsyncMock(side_effect=[False, True]),
+            ) as admin,
+            patch.object(Message, "delete", AsyncMock(return_value=True)) as delete,
+        ):
+            await update_settings(query, db)
+            delete.assert_not_awaited()
+            self.assertTrue(query.answer.await_args.kwargs["show_alert"])
+            await update_settings(query, db)
+            delete.assert_awaited_once()
+            delete.reset_mock()
+            query.from_user = author
+            await update_settings(query, db)
+            delete.assert_awaited_once()
+            self.assertEqual(admin.await_count, 2)
+
     async def test_close_panel_only_deletes_the_menu(self):
         author = User(id=42, is_bot=False, first_name="Test")
         outsider = User(id=43, is_bot=False, first_name="Other")
