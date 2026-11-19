@@ -2,6 +2,7 @@ import re
 from enum import Enum
 
 _CALL_NAME = re.compile(r"(?<![\w@])спермер(?!\w)", re.IGNORECASE)
+_LEADING_CALL_NAME = re.compile(r"^\s*спермер[\s,:—–-]+", re.IGNORECASE)
 _BACKGROUND_CALL = re.compile(
     r"(?<!\w)@ponyeb228(?!\w)|"
     r"(?<!\w)(?:сан[яьи]|саню|саней|сан[её]к|саньк[ауе]|саньком|"
@@ -12,6 +13,11 @@ _BACKGROUND_CALL = re.compile(
 
 def is_bot_name_call(text: str) -> bool:
     return bool(_CALL_NAME.search(text))
+
+
+def strip_leading_bot_call(text: str) -> str:
+    match = _LEADING_CALL_NAME.match(text)
+    return text[match.end() :] if match else text
 
 
 def suppress_background_reply(text: str) -> bool:

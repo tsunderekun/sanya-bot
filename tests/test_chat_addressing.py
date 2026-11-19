@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 from aiogram.enums import ChatType
 
 from sanya.handlers.chat import handle_message
-from sanya.intent import is_bot_name_call
+from sanya.intent import is_bot_name_call, strip_leading_bot_call
 from sanya.repository import Repository
 from sanya.services.chat import process_chat_message
 
@@ -79,3 +79,24 @@ class ChatAddressingTests(unittest.IsolatedAsyncioTestCase):
         )
         llm.generate.assert_not_awaited()
         self.db.run.assert_not_awaited()
+
+    async def test_exact_bot_tag_enqueues(self):
+        self.bot.get_me.return_value.username = "ponyeb228_bot"
+        with patch("sanya.handlers.chat.try_react_whale", new_callable=AsyncMock):
+            self.message.text = "@PONYEB228_BOT_extra, ты тут?"
+            await handle_message(self.message, self.bot, self.db, self.requests)
+            self.requests.enqueue.assert_not_awaited()
+            self.message.text = "@PONYEB228_BOT, ты тут?"
+            await handle_message(self.message, self.bot, self.db, self.requests)
+            self.requests.enqueue.assert_awaited_once_with(
+                self.message, is_proactive=False
+            )
+
+    def test_strip_address_without_removing_names_from_the_question(self):
+        self.assertEqual(
+            strip_leading_bot_call("СПЕРМЕР, какое слово?"), "какое слово?"
+        )
+        self.assertEqual(
+            strip_leading_bot_call("Кто такой Спермер?"), "Кто такой Спермер?"
+        )
+        self.assertEqual(strip_leading_bot_call("спермерский мем"), "спермерский мем")

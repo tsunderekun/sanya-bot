@@ -115,6 +115,7 @@ class DialogueContextTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Мой разговор про акварель", contents)
         self.assertIn("Совет про акварель", contents)
+        self.assertTrue(contents.endswith("[test]: как продолжить?"))
         for unrelated in ("турнир", "трамваи", "велосипед"):
             self.assertNotIn(unrelated, contents)
 

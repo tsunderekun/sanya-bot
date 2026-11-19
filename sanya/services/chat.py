@@ -26,6 +26,7 @@ from ..intent import (
     is_bot_name_call,
     is_targeted_insult,
     may_search,
+    strip_leading_bot_call,
     suppress_background_reply,
 )
 from ..llm import Ollama
@@ -528,7 +529,9 @@ async def process_chat_message(
                 original = branch_history.pop()["content"]
                 thread = f"Ответ Сани: {answer['content'][:1200]}"
         if original:
-            thread = f"Исходный вопрос: {original[:500]}\n{thread}"
+            thread = (
+                f"Исходный вопрос: {strip_leading_bot_call(original)[:500]}\n{thread}"
+            )
     elif branch_history and not has_reply_photo and not has_reply_sticker:
         # The same message is already represented as a full turn in the branch.
         thread = ""
@@ -580,7 +583,10 @@ async def process_chat_message(
             await send_answer(sale_answer)
             return
 
-    current = query_text if is_private else f"[{sender_name}]: {query_text}"
+    model_text = query_text
+    if not force_generation:
+        model_text = strip_leading_bot_call(query_text) or query_text
+    current = model_text if is_private else f"[{sender_name}]: {model_text}"
     insult = not force_search_query and is_targeted_insult(
         query_text,
         addressed=is_reply_to_bot or is_called_by_name or is_mentioned or is_private,
@@ -661,6 +667,10 @@ async def process_chat_message(
             )
         if is_proactive:
             directives.append("Вступи в разговор, тебя прямо не тегали.")
+        elif is_called_by_name or is_mentioned:
+            directives.append(
+                "Тебя позвали. Ответь на сам вопрос, не обсуждай обращение и не представляйся без запроса."
+            )
         code_only = mode is Mode.CODE and bool(_CODE_ONLY.search(query_text))
         if code_only:
             directives.append(
@@ -686,7 +696,7 @@ async def process_chat_message(
                 {
                     "role": row["role"],
                     "content": (
-                        f"[{row['user_name'] or 'Кореш'}]: {row['content']}"
+                        f"[{row['user_name'] or 'Кореш'}]: {strip_leading_bot_call(row['content']) or row['content']}"
                         if not is_private and row["role"] == "user"
                         else row["content"]
                     ),
