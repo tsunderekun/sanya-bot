@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from ..config import RULE34_API_KEY, RULE34_USER_ID
+from ..config import RULE34_API_KEY, RULE34_USER_ID, SEARCH_PROXY
 from .media import PONY_TAG_SYNONYMS
 
 SINGLE_TAG_HINT = "Слышь, накинь ещё тегов через запятую: например solo, cute, safe."
@@ -269,6 +269,7 @@ async def search_and_download_booru_image(
         timeout=5,
         follow_redirects=False,
         headers={"User-Agent": "SanyaTelegramBot/1.0 (Telegram: @ponyeb228_bot)"},
+        **({"proxy": SEARCH_PROXY} if slop and SEARCH_PROXY else {}),
     ) as client:
 
         async def fetch(source, page):

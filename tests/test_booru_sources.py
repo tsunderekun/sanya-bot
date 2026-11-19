@@ -45,13 +45,15 @@ class BooruSourceTests(unittest.IsolatedAsyncioTestCase):
 
             client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
             with (
-                patch.object(booru.httpx, "AsyncClient", return_value=client),
+                patch.object(booru, "SEARCH_PROXY", "http://proxy.test:8080"),
+                patch.object(booru.httpx, "AsyncClient", return_value=client) as factory,
                 patch.object(booru.random, "shuffle"),
             ):
                 result = await booru.search_and_download_booru_image(
                     query, seen=set(), confirmed=confirmed, slop=True
                 )
             self.assertEqual(result[2:4], ("AIBooru", f"AIBooru:{chosen}"))
+            self.assertEqual(factory.call_args.kwargs["proxy"], "http://proxy.test:8080")
 
     async def test_pony_queries_only_contact_derpibooru(self):
         for query, expected in (
@@ -74,12 +76,14 @@ class BooruSourceTests(unittest.IsolatedAsyncioTestCase):
                 with (
                     patch.object(booru, "RULE34_USER_ID", "42"),
                     patch.object(booru, "RULE34_API_KEY", "test-key"),
-                    patch.object(booru.httpx, "AsyncClient", return_value=client),
+                    patch.object(booru, "SEARCH_PROXY", "http://proxy.test:8080"),
+                    patch.object(booru.httpx, "AsyncClient", return_value=client) as factory,
                 ):
                     self.assertIsNone(
                         await booru.search_and_download_booru_image(query, seen=set())
                     )
                 self.assertEqual(len(requests), 2)
+                self.assertNotIn("proxy", factory.call_args.kwargs)
 
     async def test_e621_filters_rating_score_and_file_host(self):
         def respond(request):
