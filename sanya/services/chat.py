@@ -35,6 +35,7 @@ from ..repository import Repository
 from .booru import SINGLE_TAG_HINT, search_and_download_booru_image
 from .dialogue_notes import dialogue_notes
 from .media import extract_image_query, search_and_download_image
+from .meme_lore import meme_lore_reply
 from .ocr import recognize_image_text
 from .render import (
     CHAT_FALLBACK,
@@ -470,6 +471,23 @@ async def process_chat_message(
             bot_user.id,
             f"[Вымысел из режима рофла] {text}" if rofl else text,
         )
+
+    if (
+        not (
+            force_search_query
+            or force_image_query
+            or force_booru_query
+            or explicit
+            or is_proactive
+        )
+        and mode not in (Mode.CODE, Mode.PROMPT)
+        and not raw_text.lstrip().startswith("/")
+    ):
+        story = meme_lore_reply(query_text)
+        if story:
+            rofl = False
+            await send_answer(story, detailed=True)
+            return
 
     if (
         not force_search_query
