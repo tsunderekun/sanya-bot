@@ -78,7 +78,9 @@ class ChatAddressingTests(unittest.IsolatedAsyncioTestCase):
             self.message, self.bot, db=self.db, llm=llm, is_proactive=True
         )
         llm.generate.assert_not_awaited()
-        self.db.run.assert_not_awaited()
+        self.db.run.assert_awaited_once_with(
+            Repository.is_kent_blocked, self.message.chat.id, self.message.from_user.id
+        )
 
     async def test_exact_bot_tag_enqueues(self):
         self.bot.get_me.return_value.username = "ponyeb228_bot"

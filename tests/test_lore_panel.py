@@ -130,3 +130,49 @@ class LorePanelTests(unittest.IsolatedAsyncioTestCase):
                 facts = await self.db.run(getter, target or self.chat.id)
                 self.assertEqual([row["content"] for row in facts], ["Новый факт"])
             self.assertEqual(delete.await_count, 2)
+
+    async def test_wipe_preserves_other_scopes_and_new_entries(self):
+        for target in (0, self.user.id):
+            scope = target or self.chat.id
+            other = 77 if target else -10043
+            if target:
+
+                async def add(key, text):
+                    return await self.db.run(Repository.add_kent_fact_entry, key, text)
+
+                getter = Repository.get_kent_fact_entries
+                profile = Repository.get_user_profile
+                column = "persona_notes"
+            else:
+
+                async def add(key, text):
+                    return await self.db.run(
+                        Repository.add_chat_lore_entry, key, "Test", text
+                    )
+
+                getter = Repository.get_chat_lore_entries
+                profile = Repository.get_chat_profile
+                column = "chat_lore"
+            await add(other, "Соседняя запись")
+            await add(scope, "Первый факт")
+            await add(scope, "Второй факт")
+            await self.click(f"view:{target}:0")
+            buttons = self.edit.await_args.kwargs["reply_markup"].inline_keyboard
+            self.assertTrue(
+                any(b.text == "Удалить всё" for row in buttons for b in row)
+            )
+            await self.click(f"wipe:{target}:0")
+            confirm = self.edit.await_args.kwargs["reply_markup"].inline_keyboard[0][0]
+            self.assertEqual(len(await self.db.run(getter, scope)), 2)
+            self.admin.return_value = False
+            denied = await self.click(confirm.callback_data.removeprefix(PREFIX))
+            self.assertTrue(denied.answer.await_args.kwargs["show_alert"])
+            self.assertEqual(len(await self.db.run(getter, scope)), 2)
+            self.admin.return_value = True
+            await add(scope, "Новый факт")
+            await self.click(confirm.callback_data.removeprefix(PREFIX))
+            self.assertEqual(
+                [r["content"] for r in await self.db.run(getter, scope)], ["Новый факт"]
+            )
+            self.assertEqual((await self.db.run(profile, scope))[column], "Новый факт")
+            self.assertEqual(len(await self.db.run(getter, other)), 1)

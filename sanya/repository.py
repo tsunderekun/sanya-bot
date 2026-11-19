@@ -399,6 +399,15 @@ class Repository:
             logging.error(f"Ошибка получения записей лора чата {chat_id}: {e}")
             return []
 
+    def clear_chat_lore(self, chat_id: int, through_id: int) -> int:
+        with self.connection as conn:
+            deleted = conn.execute(
+                "DELETE FROM chat_lore_entries WHERE chat_id = ? AND id <= ?",
+                (chat_id, through_id),
+            ).rowcount
+            self._sync_chat_lore_column(conn, chat_id)
+        return deleted
+
     def delete_chat_lore_entry(
         self, entry_id: int, chat_id: Optional[int] = None
     ) -> Optional[Tuple[int, str]]:
@@ -829,6 +838,33 @@ class Repository:
         except Exception as e:
             logging.error(f"Ошибка получения фактов о кенте {user_id}: {e}")
             return []
+
+    def clear_kent_facts(self, user_id: int, through_id: int) -> int:
+        with self.connection as conn:
+            deleted = conn.execute(
+                "DELETE FROM kent_facts_entries WHERE user_id = ? AND id <= ?",
+                (user_id, through_id),
+            ).rowcount
+            self._sync_user_persona_notes_column(conn, user_id)
+        return deleted
+
+    def is_kent_blocked(self, chat_id: int, user_id: int) -> bool:
+        return (
+            self.connection.execute(
+                "SELECT 1 FROM chat_blocked_kents WHERE chat_id = ? AND user_id = ?",
+                (chat_id, user_id),
+            ).fetchone()
+            is not None
+        )
+
+    def set_kent_blocked(self, chat_id: int, user_id: int, blocked: bool) -> bool:
+        with self.connection as conn:
+            sql = (
+                "INSERT OR IGNORE INTO chat_blocked_kents (chat_id, user_id) VALUES (?, ?)"
+                if blocked
+                else "DELETE FROM chat_blocked_kents WHERE chat_id = ? AND user_id = ?"
+            )
+            return conn.execute(sql, (chat_id, user_id)).rowcount > 0
 
     def delete_kent_fact_entry(
         self, entry_id: int, user_id: Optional[int] = None

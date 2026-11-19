@@ -32,6 +32,7 @@ from .handlers import (
     chat,
     hardware,
     help_pages,
+    kent_block,
     media,
     memes,
     memory,
@@ -46,7 +47,10 @@ from .services.stickers import sync_sticker_packs
 
 def build_dispatcher() -> Dispatcher:
     dp = Dispatcher()
+    dp.message.outer_middleware(kent_block.KentBlockMiddleware())
+    dp.callback_query.outer_middleware(kent_block.KentBlockMiddleware())
     dp.include_routers(
+        kent_block.make_router(),
         basic.make_router(),
         help_pages.make_router(),
         memory.make_router(),
@@ -152,6 +156,8 @@ async def register_commands(bot: Bot):
             BotCommand(
                 command="setchat", description="Добавить/глянуть лор конфы (админ)"
             ),
+            BotCommand(command="blockkent", description="Отключить ответы участнику"),
+            BotCommand(command="unblockkent", description="Вернуть ответы участнику"),
         ]
     }
     common = (
@@ -181,7 +187,7 @@ async def register_commands(bot: Bot):
         (BotCommandScopeAllGroupChats(), group),
         (
             BotCommandScopeAllChatAdministrators(),
-            (*group, "setchat", "setkent", "clear"),
+            (*group, "setchat", "setkent", "clear", "blockkent", "unblockkent"),
         ),
     )
     for scope, names in menus:

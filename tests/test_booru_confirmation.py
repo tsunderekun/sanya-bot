@@ -170,3 +170,70 @@ class BooruConfirmationTests(unittest.IsolatedAsyncioTestCase):
             await chat.process_chat_message(message, bot, booru_confirmed=True, **args)
             search.assert_awaited_once_with("cat, solo", seen=set(), confirmed=True)
             self.assertTrue(bot.send_photo.call_args.kwargs["has_spoiler"])
+
+    async def test_r34_resolves_description_without_changing_confirmation_or_rating(
+        self,
+    ):
+        bot = SimpleNamespace(
+            get_me=AsyncMock(return_value=SimpleNamespace(id=1, username="bot")),
+            send_chat_action=AsyncMock(),
+        )
+        db = SimpleNamespace(run=AsyncMock(return_value=set()))
+        for query, confirmed, model_output, expected_calls in (
+            ("кот в шляпе", False, '["cat", "hat"]', []),
+            ("кот в шляпе", True, '["cat", "hat"]', ["cat, hat"]),
+            ("кот в шляпе, rating:g", False, '["cat", "hat"]', ["cat, hat, general"]),
+            ("кот в шляпе, safe", False, '["cat", "explicit"]', []),
+            ("кот в шляпе, safe", False, '["cat) OR (dog"]', []),
+            ("cat, hat, safe", False, "", ["cat, hat, safe"]),
+            (
+                "cat hat, safe",
+                False,
+                '["cat", "hat"]',
+                ["cat hat, safe", "cat, hat, safe"],
+            ),
+        ):
+            with self.subTest(query=query, confirmed=confirmed, output=model_output):
+                message = SimpleNamespace(
+                    text=f"/р34@bot {query}",
+                    photo=None,
+                    sticker=None,
+                    reply_to_message=None,
+                    chat=SimpleNamespace(id=-10, type="group"),
+                    from_user=SimpleNamespace(
+                        id=100, username="reader", first_name="Reader"
+                    ),
+                    message_id=7,
+                    reply=AsyncMock(),
+                )
+                llm = SimpleNamespace(generate=AsyncMock(return_value=model_output))
+                with (
+                    patch.object(
+                        chat, "ask_booru_confirmation", new_callable=AsyncMock
+                    ) as ask,
+                    patch.object(
+                        chat,
+                        "search_and_download_booru_image",
+                        AsyncMock(return_value=None),
+                    ) as search,
+                ):
+                    await chat.process_chat_message(
+                        message,
+                        bot,
+                        db=db,
+                        llm=llm,
+                        force_booru_query=query,
+                        booru_confirmed=confirmed,
+                    )
+                self.assertEqual(
+                    [c.args[0] for c in search.await_args_list], expected_calls
+                )
+                if query == "кот в шляпе" and not confirmed:
+                    ask.assert_awaited_once_with(message, query)
+                    llm.generate.assert_not_awaited()
+                else:
+                    ask.assert_not_awaited()
+                    if query == "cat, hat, safe":
+                        llm.generate.assert_not_awaited()
+                    else:
+                        llm.generate.assert_awaited_once()

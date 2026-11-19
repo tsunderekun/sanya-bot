@@ -92,6 +92,8 @@ async def facts_view(db, chat, actor, target, page=0, *, picking=False, name=Non
         if facts:
             actions.append(control("Удалить факт", "delete", target, page))
         rows.append(actions)
+        if facts:
+            rows.append([control("Удалить всё", "wipe", target)])
         if target in INITIAL_KENTS_PROFILES and not facts:
             rows.append([control("Восстановить базовый лор", "restore", target)])
     if target:
@@ -186,7 +188,18 @@ async def lore_panel_button(query, db: Database):
     action, target, value = match[1], int(match[2]), int(match[3])
     if (
         action
-        not in {"list", "view", "read", "add", "delete", "pick", "confirm", "restore"}
+        not in {
+            "list",
+            "view",
+            "read",
+            "add",
+            "delete",
+            "pick",
+            "confirm",
+            "restore",
+            "wipe",
+            "wipeconfirm",
+        }
         or max(target, value) >= 2**63
     ):
         await query.answer("Кнопка устарела.")
@@ -198,8 +211,45 @@ async def lore_panel_button(query, db: Database):
         "pick",
         "confirm",
         "restore",
+        "wipe",
+        "wipeconfirm",
     } and not await check_is_admin(msg.chat, actor):
         await query.answer("Менять лор могут только админы.", show_alert=True)
+        return
+    if action == "wipe":
+        getter = (
+            Repository.get_kent_fact_entries
+            if target
+            else Repository.get_chat_lore_entries
+        )
+        facts = await db.run(getter, target or msg.chat.id)
+        if not facts:
+            await query.answer("Удалять нечего.")
+            await edit_panel(msg, *await facts_view(db, msg.chat, actor, target))
+            return
+        scope = (
+            "Удалить все факты из досье этого кента? Досье общее для всех чатов."
+            if target
+            else "Удалить весь ручной лор этой конфы?"
+        )
+        rows = [
+            [
+                control("Да, удалить", "wipeconfirm", target, facts[-1]["id"]),
+                control("Отмена", "view", target),
+            ]
+        ]
+        await query.answer()
+        await edit_panel(
+            msg,
+            f"{scope}\nЗаписей к удалению: {len(facts)}. Автофакты и история не затронуты.",
+            panel_keyboard(rows),
+        )
+        return
+    if action == "wipeconfirm":
+        remover = Repository.clear_kent_facts if target else Repository.clear_chat_lore
+        deleted = await db.run(remover, target or msg.chat.id, value)
+        await query.answer(f"Удалено записей: {deleted}.")
+        await edit_panel(msg, *await facts_view(db, msg.chat, actor, target))
         return
     if action == "restore":
         restored = target in INITIAL_KENTS_PROFILES and await db.run(

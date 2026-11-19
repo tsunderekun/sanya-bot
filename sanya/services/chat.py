@@ -39,7 +39,11 @@ from ..vocabulary import custom_definition, select_words
 from .booru import (
     SINGLE_TAG_HINT,
     BooruUnavailable,
+    is_r34_command,
+    r34_can_retry_with_tags,
+    r34_needs_tag_resolution,
     requires_confirmation,
+    resolve_r34_tags,
     search_aibooru_idea_tags,
     search_and_download_booru_image,
 )
@@ -109,6 +113,14 @@ async def process_chat_message(
     llm: Ollama,
 ):
     if not message.from_user:
+        return
+    if (
+        message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
+        and await db.run(
+            Repository.is_kent_blocked, message.chat.id, message.from_user.id
+        )
+        is True
+    ):
         return
     if prompt_idea:
         await _process_prompt_idea(message, bot, llm)
@@ -278,6 +290,18 @@ async def process_chat_message(
             "Свежего арта по этим тегам не нашёл. Попробуй уточнить теги через запятую."
         )
         try:
+            resolve_tags = bool(
+                force_booru_query and not slop and is_r34_command(address_text)
+            )
+            needs_tags = resolve_tags and r34_needs_tag_resolution(booru_search_query)
+            if needs_tags:
+                resolved = await resolve_r34_tags(booru_search_query, llm)
+                if not resolved:
+                    await message.reply(
+                        "Не получилось подобрать теги. Попробуй описать арт короче или укажи теги через запятую."
+                    )
+                    return
+                booru_search_query = resolved
             seen = await db.run(Repository.recent_booru_ids, message.chat.id)
             booru_res = await search_and_download_booru_image(
                 booru_search_query,
@@ -285,6 +309,17 @@ async def process_chat_message(
                 confirmed=booru_confirmed,
                 **({"slop": True} if slop else {}),
             )
+            if (
+                booru_res is None
+                and resolve_tags
+                and not needs_tags
+                and r34_can_retry_with_tags(booru_search_query)
+                and (resolved := await resolve_r34_tags(booru_search_query, llm))
+            ):
+                booru_search_query = resolved
+                booru_res = await search_and_download_booru_image(
+                    booru_search_query, seen=seen, confirmed=booru_confirmed
+                )
             if booru_res:
                 img_bytes, _, booru_source, image_id, single_tag = booru_res
                 caption_prompt = [

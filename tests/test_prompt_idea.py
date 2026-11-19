@@ -117,7 +117,7 @@ class PromptIdeaTests(unittest.IsolatedAsyncioTestCase):
     async def test_idea_outputs_only_spoiler_text_and_uses_fallback_scene(self):
         message = SimpleNamespace(
             from_user=SimpleNamespace(id=100),
-            chat=SimpleNamespace(id=-10),
+            chat=SimpleNamespace(id=10, type="private"),
             message_id=7,
             reply=AsyncMock(),
         )
@@ -154,7 +154,7 @@ class PromptIdeaTests(unittest.IsolatedAsyncioTestCase):
     async def test_prompt_text_is_html_escaped_and_link_preview_disabled(self):
         message = SimpleNamespace(
             from_user=SimpleNamespace(id=100),
-            chat=SimpleNamespace(id=-10),
+            chat=SimpleNamespace(id=10, type="private"),
             message_id=7,
             reply=AsyncMock(),
         )
@@ -187,7 +187,7 @@ class PromptIdeaTests(unittest.IsolatedAsyncioTestCase):
     async def test_aibooru_tags_guide_scene_and_malformed_output_retries_once(self):
         message = SimpleNamespace(
             from_user=SimpleNamespace(id=100),
-            chat=SimpleNamespace(id=-10),
+            chat=SimpleNamespace(id=10, type="private"),
             message_id=7,
             reply=AsyncMock(),
         )
@@ -225,7 +225,7 @@ class PromptIdeaTests(unittest.IsolatedAsyncioTestCase):
     async def test_unsafe_age_word_in_generated_scene_is_not_sent(self):
         message = SimpleNamespace(
             from_user=SimpleNamespace(id=100),
-            chat=SimpleNamespace(id=-10),
+            chat=SimpleNamespace(id=10, type="private"),
             message_id=7,
             reply=AsyncMock(),
         )

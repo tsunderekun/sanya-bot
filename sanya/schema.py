@@ -3,6 +3,13 @@ from .lore import INITIAL_CHATS_LORE, INITIAL_KENTS_PROFILES
 
 def initialize(conn):
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_blocked_kents (
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, user_id)
+        );
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS chat_sticker_levels (
             chat_id INTEGER PRIMARY KEY,
             level INTEGER NOT NULL CHECK (level BETWEEN 0 AND 3)
