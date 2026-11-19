@@ -7,6 +7,71 @@ from sanya.services import booru
 
 
 class BooruSourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rule34_proxy_is_used_only_for_cdn(self):
+        requests = []
+
+        def respond(route, request):
+            requests.append((route, request.url.host))
+            if request.url.host == "api.rule34.xxx":
+                self.assertEqual(route, "direct")
+                self.assertEqual(request.url.params["api_key"], "test-key")
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": 42,
+                            "file_url": "https://wimg.rule34.xxx/42.jpg",
+                        }
+                    ],
+                )
+            self.assertNotIn("api_key", request.url.params)
+            self.assertNotIn("user_id", request.url.params)
+            if request.url.host == "wimg.rule34.xxx":
+                self.assertEqual(route, "proxy")
+                return httpx.Response(
+                    200, content=b"photo", headers={"Content-Type": "image/jpeg"}
+                )
+            self.assertEqual(route, "default")
+            return httpx.Response(200, json=[])
+
+        make_client = httpx.AsyncClient
+
+        def factory(**options):
+            proxy = options.pop("proxy", None)
+            route = (
+                "proxy"
+                if proxy
+                else "direct"
+                if options.get("trust_env") is False
+                else "default"
+            )
+            if proxy:
+                self.assertEqual(proxy, "http://proxy.test:8080")
+            return make_client(
+                transport=httpx.MockTransport(lambda request: respond(route, request)),
+                **options,
+            )
+
+        with (
+            patch.object(booru, "SEARCH_PROXY", "http://proxy.test:8080"),
+            patch.object(booru, "RULE34_USER_ID", "42"),
+            patch.object(booru, "RULE34_API_KEY", "test-key"),
+            patch.object(booru, "_sources", return_value=("Rule34", "Konachan")),
+            patch.object(booru.httpx, "AsyncClient", side_effect=factory),
+        ):
+            result = await booru.search_and_download_booru_image(
+                "scenery, landscape", seen=set(), confirmed=True
+            )
+        self.assertEqual(result[2:4], ("Rule34", "Rule34:42"))
+        self.assertEqual(
+            set(requests),
+            {
+                ("direct", "api.rule34.xxx"),
+                ("proxy", "wimg.rule34.xxx"),
+                ("default", "konachan.net"),
+            },
+        )
+
     async def test_slow_random_page_does_not_block_first_page_download(self):
         def respond(request):
             if request.url.host == "wimg.rule34.xxx":

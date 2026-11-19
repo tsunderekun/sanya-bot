@@ -2,6 +2,7 @@ import asyncio
 import logging
 import random
 import re
+from contextlib import AsyncExitStack
 from urllib.parse import urlsplit
 
 import httpx
@@ -274,17 +275,34 @@ async def search_and_download_booru_image(
     tags, single = parse_tags(query)
     if not tags:
         return None
-    async with httpx.AsyncClient(
+    sources = ("AIBooru",) if slop else _sources(tags)
+    client_options = dict(
         timeout=5,
         follow_redirects=False,
         headers={"User-Agent": "SanyaTelegramBot/1.0 (Telegram: @ponyeb228_bot)"},
-        **({"proxy": SEARCH_PROXY} if slop and SEARCH_PROXY else {}),
-    ) as client:
+    )
+    async with AsyncExitStack() as stack:
+        client = await stack.enter_async_context(
+            httpx.AsyncClient(
+                **client_options,
+                **({"proxy": SEARCH_PROXY} if slop and SEARCH_PROXY else {}),
+            )
+        )
+        rule34_api = client
+        rule34_download = client
+        if "Rule34" in sources and SEARCH_PROXY:
+            # Keep authenticated API traffic off proxies, including ambient HTTP_PROXY.
+            rule34_api = await stack.enter_async_context(
+                httpx.AsyncClient(**client_options, trust_env=False)
+            )
+            rule34_download = await stack.enter_async_context(
+                httpx.AsyncClient(**client_options, proxy=SEARCH_PROXY, trust_env=False)
+            )
 
         async def fetch(source, page):
             try:
                 return await _candidates(
-                    client,
+                    rule34_api if source == "Rule34" else client,
                     source,
                     tags,
                     single,
@@ -304,11 +322,11 @@ async def search_and_download_booru_image(
                 )
                 return None
 
-        sources = ("AIBooru",) if slop else _sources(tags)
         attempted = set(seen)
 
         async def download(image_id, url, source):
-            async with client.stream("GET", url) as response:
+            download_client = rule34_download if source == "Rule34" else client
+            async with download_client.stream("GET", url) as response:
                 if response.status_code != 200 or response.headers.get(
                     "content-type", ""
                 ).split(";")[0] not in {"image/jpeg", "image/png", "image/webp"}:
