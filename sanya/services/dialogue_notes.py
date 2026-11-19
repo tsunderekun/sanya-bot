@@ -28,6 +28,9 @@ EXPLICIT_MEME = re.compile(
     r"\b(?:что за мем|в ч[её]м (?:мем|рофл|прикол)|лор (?:про|о))\b", re.I
 )
 _TAG = re.compile(r"(?<!\w)@([a-zA-Z0-9_]+)")
+_LEADING_CALL = re.compile(r"^спермер(?:[\s,:—–-]+|$)", re.I)
+_SELF_IDENTITY = re.compile(r"кто\s+(?:я(?:\s+так(?:ой|ая))?|так(?:ой|ая)\s+я)", re.I)
+_NAMED_IDENTITY = re.compile(r"кто\s+(?:такой|такая)\s+(.+)", re.I)
 ALIASES = {alias: uid for uid, names in KENT_ALIASES.items() for alias in names}
 ALIAS_PATTERN = re.compile(
     r"(?<!\w)(?:"
@@ -127,7 +130,7 @@ def _person(repo, uid, chat_id, text, reply_user):
     return target if target and _in_scope(repo, target, chat_id, uid) else None
 
 
-def _person_note(repo, profile, chat_id, uid, text, *, brief=False):
+def _person_note(repo, profile, chat_id, uid, text, *, brief=False, about_author=False):
     name = profile["user_name"] or "Кент"
     if profile["user_id"] in INITIAL_KENTS_PROFILES:
         name = INITIAL_KENTS_PROFILES[profile["user_id"]]["user_name"]
@@ -155,7 +158,48 @@ def _person_note(repo, profile, chat_id, uid, text, *, brief=False):
         text_part = row[:budget].rsplit(" ", 1)[0] + "…" if len(row) > budget else row
         parts.append(text_part)
         budget -= len(text_part) + 2
-    return f"Лор о кенте {name}: " + "; ".join(parts) if parts else ""
+    label = "Лор о собеседнике" if about_author else f"Лор о кенте {name}"
+    return f"{label}: " + "; ".join(parts) if parts else ""
+
+
+def _self_note(facts):
+    return (
+        "Со слов собеседника в этом чате (при расхождении верь ручному лору): "
+        + "; ".join(f["fact_text"][:100] for f in facts[:4])
+    )
+
+
+def _identity_notes(repo, uid, chat_id, text):
+    question = text.rstrip(" ?!.")
+    if _SELF_IDENTITY.fullmatch(question):
+        notes = []
+        profile = repo.get_user_profile(uid)
+        if profile:
+            if note := _person_note(
+                repo, profile, chat_id, uid, text, about_author=True
+            ):
+                notes.append(note)
+        if facts := repo.get_self_facts(chat_id, uid, 4):
+            notes.append(_self_note(facts))
+        return notes
+
+    match = _NAMED_IDENTITY.fullmatch(question)
+    if not match:
+        return None
+    name = " ".join(match[1].strip(' «»"“”[]').split())
+    if name.casefold() in {"ты", "вы"}:
+        return None  # The user really asked about Sanya.
+    if _TAG.fullmatch(name):
+        profile = _person(repo, uid, chat_id, name, None)
+    elif target_id := ALIASES.get(name.casefold()):
+        profile = repo.get_user_profile(target_id)
+    else:
+        matches = repo.find_scoped_people_by_name(chat_id, uid, name)
+        profile = matches[0] if len(matches) == 1 else None
+    if profile:
+        if note := _person_note(repo, profile, chat_id, uid, text):
+            return [note]
+    return []
 
 
 def _collect(
@@ -171,6 +215,12 @@ def _collect(
 ):
     if not include_notes:
         return [], False
+    # A leading call addresses the bot; the same word after "кто такой" is a subject.
+    text = _LEADING_CALL.sub("", text.lstrip(" ,:—–-\t"), count=1)
+    if include_kents:
+        identity = _identity_notes(repo, uid, chat_id, text)
+        if identity is not None:
+            return identity, True
     notes = []
     lore_question = False
     direct = bool(PERSON_QUESTION.search(text) or SHORT_TOPIC.search(text))
@@ -242,10 +292,7 @@ def _collect(
     else:
         self_facts = [f for f in self_facts if relevant(f["fact_text"])]
     if self_facts:
-        notes.append(
-            "Со слов собеседника в этом чате (при расхождении верь ручному лору): "
-            + "; ".join(f["fact_text"][:100] for f in self_facts[:4])
-        )
+        notes.append(_self_note(self_facts))
     return notes, lore_question
 
 

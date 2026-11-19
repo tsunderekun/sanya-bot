@@ -635,6 +635,30 @@ class Repository:
             logging.error(f"Ошибка получения профиля пользователя {user_id}: {e}")
             return None
 
+    def find_scoped_people_by_name(self, chat_id: int, author_id: int, name: str):
+        """Exact display-name lookup for identity questions, not a global search."""
+        known_ids = tuple(INITIAL_KENTS_PROFILES)
+        placeholders = ", ".join("?" for _ in known_ids)
+        rows = self.connection.execute(
+            "SELECT p.user_id, p.user_name, p.first_name, p.persona_notes "
+            "FROM user_profiles AS p "
+            f"WHERE p.user_id = ? OR p.user_id IN ({placeholders}) OR "
+            "(? < 0 AND EXISTS (SELECT 1 FROM messages AS m "
+            "WHERE m.chat_id = ? AND m.user_id = p.user_id AND m.role = 'user'))",
+            (author_id, *known_ids, chat_id, chat_id),
+        )
+        key = name.casefold()
+        matches = []
+        for row in rows:
+            if any(
+                (row[field] or "").strip().lstrip("@").casefold() == key
+                for field in ("user_name", "first_name")
+            ):
+                matches.append(row)
+                if len(matches) == 2:
+                    break
+        return matches
+
     def get_all_kents(self) -> List[sqlite3.Row]:
         """Возвращает список всех кентов, у которых заполнены persona_notes."""
         try:
