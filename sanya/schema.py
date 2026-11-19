@@ -3,6 +3,14 @@ from .lore import INITIAL_CHATS_LORE, INITIAL_KENTS_PROFILES
 
 def initialize(conn):
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_vocabulary (
+            chat_id INTEGER NOT NULL,
+            word TEXT NOT NULL,
+            meaning TEXT NOT NULL,
+            PRIMARY KEY (chat_id, word)
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS chat_reply_modes (
             chat_id INTEGER PRIMARY KEY,
             mode TEXT NOT NULL CHECK (mode IN ('normal', 'rofl'))

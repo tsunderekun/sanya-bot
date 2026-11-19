@@ -102,6 +102,7 @@ async def register_commands(bot: Bot):
             [
                 BotCommand(command="help", description="Все команды и гайд по лору"),
                 BotCommand(command="mode", description="Режим чата: норм или рофл"),
+                BotCommand(command="dict", description="Словарь конфы: посмотреть, добавить, удалить"),
                 BotCommand(command="pic", description="Найти картинку"),
                 BotCommand(command="meme", description="Случайный канальный мем"),
                 BotCommand(

@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from .config import MAX_CONTEXT_CHARS, MAX_HISTORY, TOP_STICKERS_CHANCE
 from .lore import DEFAULT_STICKER_PACKS, INITIAL_KENTS_PROFILES
 from .observations import SELF_FACT_PREFIX, self_fact_prefix
+from .vocabulary import BUILTIN_INDEX, valid_meaning, valid_word, word_key
 
 
 class AmbiguousUsername(ValueError):
@@ -541,6 +542,37 @@ class Repository:
                 )
         except Exception as e:
             logging.error(f"Ошибка обновления профиля пользователя {user_id}: {e}")
+
+    def list_chat_words(self, chat_id: int):
+        return self.connection.execute(
+            "SELECT word, meaning FROM chat_vocabulary WHERE chat_id = ? ORDER BY rowid DESC",
+            (chat_id,),
+        ).fetchall()
+
+    def add_chat_word(self, chat_id: int, word: str, meaning: str) -> str:
+        word, meaning = word_key(word), meaning.strip()
+        if word in BUILTIN_INDEX:
+            return "builtin"
+        if not valid_word(word) or not valid_meaning(meaning):
+            return "invalid"
+        with self.connection as conn:
+            inserted = conn.execute(
+                "INSERT INTO chat_vocabulary (chat_id, word, meaning) VALUES (?, ?, ?) "
+                "ON CONFLICT(chat_id, word) DO NOTHING",
+                (chat_id, word, meaning),
+            ).rowcount
+        return "added" if inserted else "exists"
+
+    def delete_chat_word(self, chat_id: int, word: str) -> str:
+        word = word_key(word)
+        if word in BUILTIN_INDEX:
+            return "builtin"
+        with self.connection as conn:
+            deleted = conn.execute(
+                "DELETE FROM chat_vocabulary WHERE chat_id = ? AND word = ?",
+                (chat_id, word),
+            ).rowcount
+        return "deleted" if deleted else "missing"
 
     def get_chat_reply_mode(self, chat_id: int) -> str:
         row = self.connection.execute(

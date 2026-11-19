@@ -8,6 +8,7 @@ from ..database import Database
 from ..repository import Repository
 from .access import check_is_admin
 from .command_args import command_args
+from .vocabulary import cmd_vocabulary
 
 log = logging.getLogger(__name__)
 MODE_LABELS = {"normal": "норм", "rofl": "рофл"}
@@ -69,6 +70,7 @@ async def cmd_help(message: types.Message):
         "<b>Команды и возможности Сани Пониёба:</b>\n\n"
         "В группе позови «Спермер», тегни <code>@ponyeb228_bot</code> или ответь на сообщение бота. «Саня» и тег живого Сани бота не зовут. В личке пиши как обычно.\n\n"
         "<b>Основные команды:</b>\n"
+        "• <code>/словарь</code> или <code>/dict</code> — посмотреть слова. <code>/словарь слово</code> — значение. <code>/словарь добавить слово = значение</code> и <code>/словарь удалить слово</code> — правки словаря этого чата (в группе только админы). Встроенные слова защищены. Не добавляй личные данные.\n"
         "• <code>/режим</code> или <code>/mode</code> — текущий режим; <code>/режим норм</code> или <code>/режим рофл</code> — переключить (в группе только админ).\n"
         "• <code>/s &lt;запрос&gt;</code> (или <code>/поиск</code>, <code>/найти</code>, <code>/гугл</code>) — поиск в сети через SearXNG\n"
         "• <code>/pic &lt;запрос&gt;</code> (или <code>/пикча</code>, <code>/картинка</code>, <code>/фото</code>) — найти и закинуть сочную картинку в чат\n"
@@ -135,6 +137,7 @@ def make_router() -> Router:
     router = Router(name=__name__)
     router.message.register(cmd_start, Command("start", "старт"))
     router.message.register(cmd_reply_mode, Command("mode", "режим"))
+    router.message.register(cmd_vocabulary, Command("dict", "словарь"))
     router.callback_query.register(confirm_release, F.data == RELEASE_ACK)
     router.message.register(
         cmd_help,
