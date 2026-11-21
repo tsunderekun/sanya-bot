@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 import unittest
 from contextlib import closing
@@ -16,6 +17,7 @@ from sanya.repository import Repository
 from sanya.schema import initialize
 from sanya.services.chat import process_chat_message
 from sanya.services.queue import EnqueueResult
+from sanya.services.search import SearchEvidence
 
 
 class CommandTests(unittest.IsolatedAsyncioTestCase):
@@ -149,7 +151,8 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch("sanya.services.chat.ENABLE_WEB_SEARCH", True),
             patch(
-                "sanya.services.chat.lookup_snippets", AsyncMock(return_value="")
+                "sanya.services.chat.lookup_search_evidence",
+                AsyncMock(return_value=SearchEvidence("")),
             ) as search,
             patch(
                 "sanya.services.chat.dialogue_notes",
@@ -166,6 +169,79 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
             )
         search.assert_awaited_once_with("напиши скрипт")
         llm.generate.assert_not_awaited()
+
+    async def test_search_reuses_empty_prefetch_without_repeating_lookup(self):
+        self.message.text = "/s test"
+        self.message.photo = self.message.sticker = None
+        self.message.from_user.username = "reader"
+        self.message.message_id = 9
+        bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(id=1, username="bot")))
+        llm = SimpleNamespace(generate=AsyncMock())
+        prefetched = asyncio.create_task(AsyncMock(return_value=SearchEvidence(""))())
+        with (
+            patch("sanya.services.chat.ENABLE_WEB_SEARCH", True),
+            patch("sanya.services.chat.lookup_search_evidence", AsyncMock()) as search,
+            patch("sanya.services.chat.dialogue_notes", AsyncMock(return_value=([], False))),
+            patch("sanya.services.chat.keep_typing", AsyncMock()),
+        ):
+            await process_chat_message(
+                self.message, bot, db=self.db, llm=llm,
+                force_search_query="test", prefetched_search=prefetched,
+            )
+        search.assert_not_awaited()
+        llm.generate.assert_not_awaited()
+        self.assertIn("Поиск ничего не вернул", self.message.reply.await_args.args[0])
+
+    async def test_search_appends_real_urls_to_grounded_answer(self):
+        self.message.text = "/s характеристики RTX 3070 на сайте NVIDIA"
+        self.message.photo = self.message.sticker = None
+        self.message.from_user.username = "reader"
+        self.message.message_id = 9
+        bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(id=1, username="bot")))
+        answer = "Во фрагменте NVIDIA указан Ampere, но нет объёма видеопамяти."
+        llm = SimpleNamespace(generate=AsyncMock(return_value=answer))
+        sources = "Источник 1 (www.nvidia.com): RTX 3070: Ampere"
+        url = "https://www.nvidia.com/geforce/graphics-cards/30-series/rtx-3070-3070ti/"
+        prefetched = asyncio.create_task(AsyncMock(return_value=SearchEvidence(sources, (url,)))())
+        with (
+            patch("sanya.services.chat.ENABLE_WEB_SEARCH", True),
+            patch("sanya.services.chat.lookup_search_evidence", AsyncMock()) as search,
+            patch("sanya.services.chat.dialogue_notes", AsyncMock(return_value=([], False))),
+            patch("sanya.services.chat.keep_typing", AsyncMock()),
+            patch("sanya.services.chat.send_burst_messages", AsyncMock(return_value=[10])) as send,
+        ):
+            await process_chat_message(
+                self.message, bot, db=self.db, llm=llm,
+                force_search_query=self.message.text[3:], prefetched_search=prefetched,
+            )
+        search.assert_not_awaited()
+        prompt = llm.generate.await_args.kwargs["system_prompt"]
+        self.assertIn("прямо скажи, чего не хватает", prompt)
+        self.assertIn(sources, llm.generate.await_args.args[0][-1]["content"])
+        self.assertEqual(send.await_args.args[3], answer.rstrip(".") + f"\n\nСсылки из выдачи:\n1. {url}")
+
+    async def test_search_sends_official_specs_without_generation(self):
+        self.message.text = "/s характеристики RTX 3070 NVIDIA"
+        self.message.photo = self.message.sticker = None
+        self.message.from_user.username = "reader"
+        self.message.message_id = 9
+        bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(id=1, username="bot")))
+        llm = SimpleNamespace(generate=AsyncMock())
+        evidence = SearchEvidence("", ("https://www.nvidia.com/",), official_answer="5888 CUDA-ядер")
+        with (
+            patch("sanya.services.chat.ENABLE_WEB_SEARCH", True),
+            patch("sanya.services.chat.lookup_search_evidence", AsyncMock(return_value=evidence)),
+            patch("sanya.services.chat.dialogue_notes", AsyncMock(return_value=([], False))),
+            patch("sanya.services.chat.keep_typing", AsyncMock()),
+            patch("sanya.services.chat.send_burst_messages", AsyncMock(return_value=[10])) as send,
+        ):
+            await process_chat_message(
+                self.message, bot, db=self.db, llm=llm, force_search_query=self.message.text[3:]
+            )
+        llm.generate.assert_not_awaited()
+        send.assert_awaited_once_with(
+            bot, -1001, 9, "5888 CUDA-ядер\nИсточник: https://www.nvidia.com/", is_detailed=True
+        )
 
     async def test_gpu_review_in_group_generates_technical_answer_without_search(self):
         self.message.text = "/оцени RTX 3070"

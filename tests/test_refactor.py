@@ -185,6 +185,7 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
     def test_intents_and_budget(self):
         for text, quote, mode in (
             ("напиши bash скрипт для поиска картинок", "", Mode.CODE),
+            ("напиши бота для Telegram", "", Mode.CODE),
             ("дай промпт для генерации картинки пони", "", Mode.PROMPT),
             ("допиши", "вот код", Mode.CODE),
             ("write a PowerShell script to find images", "", Mode.CODE),
@@ -196,6 +197,14 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
         fitted = fit_prompt(turn("системный", "system"), [turn("ж" * 14_000), turn("свежий"), current])
         self.assertEqual(fitted[1:], [turn("свежий"), current])
         self.assertLessEqual(estimate_tokens(fitted), 8500)
+
+    def test_bot_mentions_do_not_request_code(self):
+        for text in (
+            "Бот отвечает на вопрос",
+            "Пока бот ещё отвечает, после кулдауна: /s характеристики RTX 3070 на сайте NVIDIA",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNot(classify_intent(text), Mode.CODE)
 
     def test_router_builds_twice(self):
         self.assertEqual(build_dispatcher().resolve_used_update_types(), ["callback_query", "channel_post", "message"])

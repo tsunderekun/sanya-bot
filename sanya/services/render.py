@@ -74,7 +74,15 @@ def _table_inline(text: str, *, rich: bool = True) -> str:
 
 
 def render_compact_reply(text: str) -> str:
-    return "\n".join(_table_inline(line) for line in text.splitlines())
+    lines = []
+    for line in text.splitlines():
+        if _TABLE_DIVIDER.fullmatch(line.strip()):
+            continue
+        if item := _TABLE_BULLET.fullmatch(line):
+            lines.append("• " + _table_inline(item[1]))
+        else:
+            lines.append(_table_inline(line))
+    return "\n".join(lines).strip()
 
 
 def _table_prose(text: str) -> tuple[str, str]:
@@ -329,15 +337,14 @@ def valid_output(text: str, mode: Mode) -> bool:
 
 def render_messages(text: str, *, detailed: bool) -> list[str]:
     if not detailed:
-        return [html.escape(line) for line in text.splitlines() if line.strip()][:4]
+        return [line for line in render_compact_reply(text).splitlines() if line.strip()][:4]
     chunks = []
     for lang, body in _parts(text):
         if lang is None:
             for paragraph in re.split(r"\n\s*\n", body.strip()):
-                chunks.extend(
-                    html.escape(paragraph[i : i + 1900])
-                    for i in range(0, len(paragraph), 1900)
-                )
+                for i in range(0, len(paragraph), 1900):
+                    if rendered := render_compact_reply(paragraph[i : i + 1900]):
+                        chunks.append(rendered)
         elif len(body.encode("utf-16-le")) // 2 <= 3800:
             chunks.append(
                 f'<pre><code class="language-{lang}">{html.escape(body)}</code></pre>'

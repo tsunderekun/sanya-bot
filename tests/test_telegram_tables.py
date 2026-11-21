@@ -7,7 +7,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendMessage
 
 from sanya.intent import Mode
-from sanya.services.render import clean_response, render_table_reply
+from sanya.services.render import clean_response, render_messages, render_table_reply
 from sanya.services.telegram import send_burst_messages
 
 TABLE = (
@@ -23,6 +23,13 @@ TABLE = (
 
 
 class TableTests(unittest.IsolatedAsyncioTestCase):
+    def test_formats_markdown_without_tables_and_escapes_html(self):
+        text = "**Плюсы:**\n* `x < 5` & *быстро*\n***\n1. **Итог** <tag>"
+        expected = ["<b>Плюсы:</b>", "• <code>x &lt; 5</code> &amp; <i>быстро</i>", "1. <b>Итог</b> &lt;tag&gt;"]
+        self.assertEqual(render_messages(text, detailed=False), expected)
+        self.assertEqual(render_messages(text, detailed=True), ["\n".join(expected)])
+        self.assertEqual(render_messages("***\n\n**Итог**", detailed=True), ["<b>Итог</b>"])
+
     def test_chat_cleanup_preserves_all_rows_and_surrounding_text(self):
         cleaned, _, _ = clean_response(TABLE, Mode.CHAT)
         self.assertEqual(cleaned, TABLE)

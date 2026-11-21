@@ -4,9 +4,60 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from sanya.services.queue import EnqueueResult, RequestQueue
+from sanya.services.search import SearchEvidence
 
 
 class RequestQueueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_search_prefetch_overlaps_chat_but_keeps_reply_order_and_cooldown(self):
+        started = asyncio.Event()
+        release = asyncio.Event()
+        fetched = asyncio.Event()
+        replies = []
+        first = SimpleNamespace(from_user=SimpleNamespace(id=1))
+        second = SimpleNamespace(from_user=SimpleNamespace(id=2), text="/s test")
+        third = SimpleNamespace(from_user=SimpleNamespace(id=3), text="/s rejected")
+
+        async def lookup(query):
+            fetched.set()
+            return SearchEvidence("sources", ("https://example.com/item",))
+
+        async def process(*, message, prefetched_search=None, **kwargs):
+            if message is first:
+                started.set()
+                await release.wait()
+            else:
+                self.assertTrue(prefetched_search.done())
+                self.assertEqual(
+                    await prefetched_search,
+                    SearchEvidence("sources", ("https://example.com/item",)),
+                )
+            replies.append(message)
+
+        search = AsyncMock(side_effect=lookup)
+        with (
+            patch("sanya.services.queue.MAX_QUEUE_SIZE", 1),
+            patch("sanya.services.queue.USER_COOLDOWN_SECONDS", 60),
+            patch("sanya.services.queue.ADMIN_IDS", set()),
+        ):
+            queue = RequestQueue(search=search)
+            self.assertIs(await queue.enqueue(first), EnqueueResult.ACCEPTED)
+            worker = asyncio.create_task(queue.work(process))
+            try:
+                await asyncio.wait_for(started.wait(), 2)
+                self.assertIs(await queue.enqueue(first, force_search_query="cooldown"), EnqueueResult.COOLDOWN)
+                self.assertIs(await queue.enqueue(second, force_search_query="test"), EnqueueResult.ACCEPTED)
+                self.assertIs(await queue.enqueue(third, force_search_query="full"), EnqueueResult.FULL)
+                await asyncio.wait_for(fetched.wait(), 2)
+                self.assertEqual(replies, [])
+                release.set()
+                await asyncio.wait_for(queue._queue.join(), 2)
+                self.assertEqual(replies, [first, second])
+                search.assert_awaited_once_with("test")
+            finally:
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
+                await queue.close()
+
     async def test_slow_request_preserves_order_and_reports_wait_and_rejections(self):
         started = asyncio.Event()
         release = asyncio.Event()

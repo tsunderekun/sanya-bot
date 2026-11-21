@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 from time import monotonic
@@ -7,7 +8,8 @@ from time import monotonic
 from aiogram.types import Message
 
 from ..config import ADMIN_IDS, MAX_QUEUE_SIZE, USER_COOLDOWN_SECONDS
-from ..intent import Mode
+from ..intent import OS_COMMAND_REQUEST_PATTERN, PROMPT_INJECTION_PATTERN, Mode
+from .search import SearchEvidence
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ class Request:
     force_generation: tuple[Mode, str] | None = None
     prompt_idea: bool = False
     custom_trigger: bool = False
+    prefetched_search: asyncio.Task[SearchEvidence] | None = None
 
     @property
     def kind(self) -> str:
@@ -59,8 +62,11 @@ class Request:
 
 
 class RequestQueue:
-    def __init__(self):
+    def __init__(self, search: Callable[[str], Awaitable[SearchEvidence]] | None = None):
         self._queue: asyncio.Queue[Request] = asyncio.Queue(maxsize=max(1, MAX_QUEUE_SIZE))
+        self._search = search
+        self._search_slots = asyncio.Semaphore(2)
+        self._search_tasks: set[asyncio.Task[SearchEvidence]] = set()
         self._last_request: dict[int, float] = {}
         self.last_proactive: dict[int, float] = {}
         self.proactive_history: dict[int, list[float]] = {}
@@ -81,10 +87,53 @@ class RequestQueue:
             and now - self._last_request.get(uid, float("-inf")) < USER_COOLDOWN_SECONDS
         ):
             return EnqueueResult.COOLDOWN
+        query = kwargs.get("force_search_query")
+        text = getattr(message, "text", None) or getattr(message, "caption", None) or ""
+        # Leave commands with mentions in their arguments to normal chat validation.
+        if (
+            self._search is not None
+            and query
+            and "@" not in query
+            and not OS_COMMAND_REQUEST_PATTERN.search(text)
+            and not PROMPT_INJECTION_PATTERN.search(text)
+        ):
+            task = asyncio.create_task(self._prefetch(self._search, query))
+            self._search_tasks.add(task)
+            task.add_done_callback(self._search_tasks.discard)
+            kwargs["prefetched_search"] = task
         self._queue.put_nowait(Request(message, enqueued_at=now, **kwargs))
         if limited:
             self._last_request[uid] = now
         return EnqueueResult.ACCEPTED
+
+    async def _prefetch(
+        self, search: Callable[[str], Awaitable[SearchEvidence]], query: str
+    ) -> SearchEvidence:
+        async with self._search_slots:
+            started = monotonic()
+            outcome = "ok"
+            try:
+                result = await search(query)
+                if not (result.snippets or result.official_answer):
+                    outcome = "empty"
+                return result
+            except asyncio.CancelledError:
+                outcome = "cancelled"
+                raise
+            except Exception:
+                outcome = "error"
+                return SearchEvidence("")
+            finally:
+                logger.info(
+                    "request_search outcome=%s lookup_ms=%.1f",
+                    outcome, (monotonic() - started) * 1000,
+                )
+
+    async def close(self):
+        tasks = tuple(self._search_tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def work(self, process):
         while True:
@@ -112,6 +161,11 @@ class RequestQueue:
                     ),
                     **({"prompt_idea": True} if item.prompt_idea else {}),
                     **({"custom_trigger": True} if item.custom_trigger else {}),
+                    **(
+                        {"prefetched_search": item.prefetched_search}
+                        if item.prefetched_search is not None
+                        else {}
+                    ),
                 )
             except asyncio.CancelledError:
                 outcome = "cancelled"
@@ -121,6 +175,8 @@ class RequestQueue:
                 # Exception messages may contain request text or URLs.
                 logger.error("Ошибка обработки запроса: %s", type(exc).__name__)
             finally:
+                if item.prefetched_search is not None and not item.prefetched_search.done():
+                    item.prefetched_search.cancel()
                 self._queue.task_done()
                 logger.info(
                     "request_queue kind=%s outcome=%s wait_ms=%.1f processing_ms=%.1f",

@@ -42,6 +42,7 @@ from .handlers import (
 from .llm import Ollama
 from .services.chat import process_chat_message
 from .services.queue import RequestQueue
+from .services.search import lookup_search_evidence
 from .services.stickers import sync_sticker_packs
 
 
@@ -101,7 +102,7 @@ async def main():
     ):
         await register_commands(bot)
         llm = Ollama(client)
-        requests = RequestQueue()
+        requests = RequestQueue(search=lookup_search_evidence if ENABLE_WEB_SEARCH else None)
         meme_precache = memes.MemePrecache()
         process = partial(process_chat_message, bot=bot, db=db, llm=llm)
         worker = asyncio.create_task(requests.work(process))
@@ -122,6 +123,7 @@ async def main():
             await asyncio.gather(
                 worker,
                 sync,
+                requests.close(),
                 meme_precache.close(),
                 return_exceptions=True,
             )
