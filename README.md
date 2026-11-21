@@ -98,9 +98,12 @@ journalctl --user -u sanya-bot.service -f
 Строки `request_queue` в журнале показывают тип запроса, время ожидания в очереди (`wait_ms`) и время обработки (`processing_ms`). Эти записи не включают текст сообщений, поисковые запросы или ID пользователей и чатов.
 
 ```bash
-python -m unittest discover -s tests -q
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
 python -m ruff check sanya tests update_kents_db.py --select F,I
 ```
+
+Для тестов нужен Python 3.11 или новее. Запуск из корня собирает только `tests/`, не затрагивая локальные экспериментальные скрипты. GitHub Actions прогоняет тесты и Ruff на Python 3.11 и 3.14.
 
 ### Как поручить развёртывание агенту
 
