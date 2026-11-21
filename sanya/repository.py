@@ -594,14 +594,26 @@ class Repository:
 
     def get_chat_reply_settings(self, chat_id: int) -> ChatReplySettings:
         row = self.connection.execute(
-            "SELECT coalesce(m.mode, 'normal'), coalesce(s.tone, ?), coalesce(s.lore, ?), k.level "
+            "SELECT coalesce(m.mode, 'normal'), coalesce(s.tone, ?), coalesce(s.lore, ?), "
+            "k.level, coalesce(v.chance, 0) "
             "FROM (SELECT ? AS chat_id) AS c "
             "LEFT JOIN chat_reply_modes AS m USING (chat_id) "
             "LEFT JOIN chat_reply_styles AS s USING (chat_id) "
-            "LEFT JOIN chat_sticker_levels AS k USING (chat_id)",
+            "LEFT JOIN chat_sticker_levels AS k USING (chat_id) "
+            "LEFT JOIN chat_voice_settings AS v USING (chat_id)",
             (DEFAULT_LEVEL, DEFAULT_LEVEL, chat_id),
         ).fetchone()
-        return ChatReplySettings(row[0], ReplyStyle(row[1], row[2]), row[3])
+        return ChatReplySettings(row[0], ReplyStyle(row[1], row[2]), row[3], row[4])
+
+    def set_chat_voice_chance(self, chat_id: int, chance: int) -> None:
+        if type(chance) is not int or not 0 <= chance <= 100:
+            raise ValueError("Invalid voice chance")
+        with self.connection as conn:
+            conn.execute(
+                "INSERT INTO chat_voice_settings (chat_id, chance) VALUES (?, ?) "
+                "ON CONFLICT(chat_id) DO UPDATE SET chance = excluded.chance",
+                (chat_id, chance),
+            )
 
     def get_chat_trigger_phrases(self, chat_id: int):
         return self.connection.execute(

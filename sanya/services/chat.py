@@ -83,6 +83,7 @@ from .sale_reply import grounded_sale_reply
 from .search import SearchEvidence, lookup_search_evidence, perform_web_search
 from .stickers import send_sanya_sticker
 from .telegram import keep_typing, send_burst_messages
+from .voice import PiperVoiceReplies, detail_voice_text, send_voice_reply, voice_text
 
 _CODE_ONLY = re.compile(
     r"\b(?:только\s+код|без\s+(?:пояснений|вступления|комментариев\s+вне\s+кода)|"
@@ -145,6 +146,7 @@ async def process_chat_message(
     custom_trigger: bool = False,
     db: Database,
     llm: Ollama,
+    voice: PiperVoiceReplies | None = None,
 ):
     if not message.from_user:
         return
@@ -760,11 +762,12 @@ async def process_chat_message(
     if not is_private:
         await db.run(Repository.analyze_chat_phrases, chat_id, raw_text)
 
-    async def send_answer(text: str, *, detailed: bool = False):
-        sent_ids = await send_burst_messages(
-            bot, chat_id, message.message_id, text, is_detailed=detailed,
-            **({"compact": True} if force_gpu_query else {}),
-        )
+    async def send_answer(text: str, *, detailed: bool = False, sent_ids: list[int] | None = None):
+        if not sent_ids:
+            sent_ids = await send_burst_messages(
+                bot, chat_id, message.message_id, text, is_detailed=detailed,
+                **({"compact": True} if force_gpu_query else {}),
+            )
         await db.run(
             Repository.save_chat_answer,
             chat_id,
@@ -773,7 +776,7 @@ async def process_chat_message(
             bot_user.id,
             f"[Вымысел из режима рофла] {text}" if rofl else text,
         )
-        return bool(sent_ids)
+        return sent_ids
 
     lore_allowed = (
         plain_chat
@@ -928,6 +931,15 @@ async def process_chat_message(
             if safe:
                 system_prompt += " " + SAFE_VOICE
         else:
+            if (
+                voice is not None and mode is Mode.DETAIL and lore_allowed
+                and settings.mode == "normal" and settings.voice_chance > 0
+                and not (safe or lore_question or recall or search_query)
+            ):
+                directives.append(
+                    "Заверши разбор отдельным абзацем «Итог:» до 360 символов. "
+                    "Кратко повтори главный вывод и важную оговорку, без новых фактов."
+                )
             system_prompt = build_system_prompt(
                 mode,
                 query_text,
@@ -1183,8 +1195,43 @@ async def process_chat_message(
         result += "\n\nСсылки из выдачи:\n" + "\n".join(
             f"{number}. {url}" for number, url in enumerate(source_urls, 1)
         )
-    sent = await send_answer(result, detailed=mode is not Mode.CHAT)
-    if not safe and sent and mode is Mode.CHAT and not suppress_auto_sticker:
+    detailed = mode is not Mode.CHAT
+    delivered = await send_answer(result, detailed=True) if detailed else []
+    voice_ids = []
+    voice_settings = (
+        await db.run(Repository.get_chat_reply_settings, chat_id)
+        if voice is not None and force_gpu_query and not safe and delivered
+        else settings
+    )
+    if (
+        voice is not None
+        and (lore_allowed or force_gpu_query)
+        and (mode is Mode.CHAT or (mode is Mode.DETAIL and delivered and not lore_question))
+        and not (
+            safe or rofl or insult or recall or suppress_auto_sticker or force_generation
+            or search_context or (message.reply_to_message and not is_reply_to_bot)
+        )
+        and voice_settings.mode == "normal"
+        and voice_settings.voice_chance > 0
+        and (spoken := (detail_voice_text(result) if detailed else voice_text(result)))
+        and random.random() < voice_settings.voice_chance / 100
+    ):
+        audio = await voice.render(spoken)
+        latest = await db.run(Repository.get_chat_reply_settings, chat_id)
+        if latest.mode == "safe":
+            return
+        if audio and latest.mode == "normal" and latest.voice_chance:
+            voice_ids = await send_voice_reply(
+                bot, chat_id, delivered[0] if detailed else message.message_id, audio
+            )
+            if detailed and voice_ids:
+                # Treat the audio as another part of the text answer for reply history.
+                await db.run(
+                    Repository.save_chat_answer, chat_id, voice_ids, message.message_id,
+                    bot_user.id, "",
+                )
+    sent = delivered if detailed else await send_answer(result, sent_ids=voice_ids)
+    if not safe and sent and mode is Mode.CHAT and not suppress_auto_sticker and not voice_ids:
         sticker_settings = (
             settings
             if plain_chat

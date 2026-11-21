@@ -1,0 +1,2 @@
+# Optional CPU voice replies; not required by the text-only bot.
+piper-tts==1.8.0

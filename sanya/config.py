@@ -20,6 +20,7 @@ MEME_DONOR_CHANNEL_IDS = {
 }
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "tesseract")
 OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() in ("1", "true", "yes")
+PIPER_MODEL_PATH = os.getenv("PIPER_MODEL_PATH", "").strip()
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://localhost:11434")

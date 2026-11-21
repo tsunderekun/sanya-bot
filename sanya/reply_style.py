@@ -17,3 +17,4 @@ class ChatReplySettings:
     mode: str = "normal"
     style: ReplyStyle = ReplyStyle()
     sticker_level: int | None = None
+    voice_chance: int = 0

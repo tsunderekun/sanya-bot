@@ -30,6 +30,12 @@ def initialize(conn):
             PRIMARY KEY (chat_id, word)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_voice_settings (
+            chat_id INTEGER PRIMARY KEY,
+            chance INTEGER NOT NULL CHECK (chance BETWEEN 0 AND 100)
+        )
+    """)
     mode_schema = """
         CREATE TABLE IF NOT EXISTS chat_reply_modes (
             chat_id INTEGER PRIMARY KEY,

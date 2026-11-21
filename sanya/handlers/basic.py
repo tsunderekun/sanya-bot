@@ -4,6 +4,7 @@ from aiogram import F, Router, types
 from aiogram.enums import ChatType
 from aiogram.filters import Command
 
+from ..config import PIPER_MODEL_PATH
 from ..database import Database
 from ..repository import Repository
 from .access import check_is_admin
@@ -44,6 +45,37 @@ async def cmd_reply_mode(message: types.Message, db: Database):
     mode = MODE_ARGS[arg]
     await db.run(Repository.set_chat_reply_mode, chat.id, mode)
     await message.reply(f"Режим этого чата: {MODE_LABELS[mode]}")
+
+
+async def cmd_voice(message: types.Message, db: Database):
+    chat = message.chat
+    arg = command_args(message).casefold()
+    hint = "/голосовые 25 — шанс 25%, /голосовые выкл — выключить."
+    if not arg:
+        chance = (await db.run(Repository.get_chat_reply_settings, chat.id)).voice_chance
+        status = f"шанс {chance}%" if chance else "выключены"
+        if not PIPER_MODEL_PATH:
+            status += " (синтез на сервере не настроен)"
+        await message.reply(f"Голосовые: {status}.\n{hint}")
+        return
+    if chat.type != ChatType.PRIVATE and (
+        not message.from_user or not await check_is_admin(chat, message.from_user.id)
+    ):
+        await message.reply("В группе голосовые настраивает только админ.")
+        return
+    value = arg.removesuffix("%")
+    if arg in ("off", "выкл"):
+        chance = 0
+    elif value.isascii() and value.isdecimal() and len(value) <= 3 and int(value) <= 100:
+        chance = int(value)
+    else:
+        await message.reply(f"Укажи шанс от 0 до 100. {hint}")
+        return
+    if chance and not PIPER_MODEL_PATH:
+        await message.reply("Голосовые пока недоступны: синтез на сервере не настроен.")
+        return
+    await db.run(Repository.set_chat_voice_chance, chat.id, chance)
+    await message.reply(f"Шанс голосового ответа: {chance}%." if chance else "Голосовые выключены.")
 
 
 async def confirm_release(query: types.CallbackQuery):
@@ -97,6 +129,7 @@ def make_router() -> Router:
         cmd_sticker_activity, Command("stickeractivity", "автостикеры")
     )
     router.message.register(cmd_reply_mode, Command("mode", "режим"))
+    router.message.register(cmd_voice, Command("voice", "голосовые"))
     router.message.register(cmd_tone, Command("tone", "тон", "агрессия"))
     router.message.register(cmd_lore_level, Command("lore", "лор"))
     router.message.register(cmd_vocabulary, Command("dict", "словарь"))

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from functools import partial
+from pathlib import Path
 
 import httpx
 from aiogram import Bot, Dispatcher
@@ -22,6 +23,7 @@ from .config import (
     MAX_HISTORY,
     MODEL_NAME,
     OPENAI_BASE_URL,
+    PIPER_MODEL_PATH,
     SEARCH_ENGINE,
     SEARXNG_URL,
     TELEGRAM_PROXY,
@@ -44,6 +46,7 @@ from .services.chat import process_chat_message
 from .services.queue import RequestQueue
 from .services.search import lookup_search_evidence
 from .services.stickers import sync_sticker_packs
+from .services.voice import PiperVoiceReplies
 
 
 def build_dispatcher() -> Dispatcher:
@@ -104,7 +107,8 @@ async def main():
         llm = Ollama(client)
         requests = RequestQueue(search=lookup_search_evidence if ENABLE_WEB_SEARCH else None)
         meme_precache = memes.MemePrecache()
-        process = partial(process_chat_message, bot=bot, db=db, llm=llm)
+        voice = PiperVoiceReplies(Path(PIPER_MODEL_PATH)) if PIPER_MODEL_PATH else None
+        process = partial(process_chat_message, bot=bot, db=db, llm=llm, voice=voice)
         worker = asyncio.create_task(requests.work(process))
         sync = asyncio.create_task(sync_sticker_packs(bot, db))
         try:
