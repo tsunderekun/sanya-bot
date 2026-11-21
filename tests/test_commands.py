@@ -167,6 +167,38 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         search.assert_awaited_once_with("напиши скрипт")
         llm.generate.assert_not_awaited()
 
+    async def test_gpu_review_in_group_generates_technical_answer_without_search(self):
+        self.message.text = "/оцени RTX 3070"
+        self.message.photo = self.message.sticker = None
+        self.message.from_user.username = "reader"
+        self.message.message_id = 9
+        self.db.run.return_value = []
+        bot = SimpleNamespace(
+            get_me=AsyncMock(return_value=SimpleNamespace(id=1, username="ponyeb228_bot"))
+        )
+        answer = "RTX 3070 подходит для 1440p, но в тяжёлых играх может не хватать видеопамяти."
+        llm = SimpleNamespace(generate=AsyncMock(return_value=answer))
+        with (
+            patch("sanya.services.chat.ENABLE_WEB_SEARCH", True),
+            patch("sanya.services.chat.lookup_snippets", AsyncMock()) as search,
+            patch("sanya.services.chat.dialogue_notes", AsyncMock(return_value=([], False))),
+            patch("sanya.services.chat.keep_typing", AsyncMock()),
+            patch("sanya.services.chat.send_burst_messages", AsyncMock(return_value=[10])) as send,
+        ):
+            await process_chat_message(
+                self.message, bot, db=self.db, llm=llm, force_gpu_query="RTX 3070"
+            )
+        search.assert_not_awaited()
+        llm.generate.assert_awaited_once()
+        self.assertIn("RTX 3070", llm.generate.await_args.args[0][-1]["content"])
+        prompt = llm.generate.await_args.kwargs["system_prompt"]
+        self.assertIn("цен и объявлений", prompt)
+        self.assertIn("8 ГБ GDDR6", prompt)
+        self.assertTrue(llm.generate.await_args.kwargs["short_answer"])
+        send.assert_awaited_once_with(
+            bot, -1001, 9, answer.rstrip("."), is_detailed=True, compact=True
+        )
+
     async def test_chat_admin_cannot_access_another_chats_lore(self):
         async def is_admin(chat, user_id):
             return chat is self.message.chat

@@ -10,12 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from sanya.handlers.hardware import (
-    cmd_hardware,
-    cmd_price,
-    listing_prices,
-    send_price_estimate,
-)
+from sanya.handlers.hardware import cmd_gpu_review, cmd_hardware
 from sanya.handlers.memes import (
     cmd_meme,
     collect_channel_post,
@@ -160,19 +155,18 @@ class FeatureTests(unittest.IsolatedAsyncioTestCase):
         await cmd_hardware(message, db)
         self.assertIn("i5-10400F", message.reply.await_args.args[0])
 
-    async def test_price_refuses_to_guess_without_enough_listings(self):
+    async def test_gpu_review_enqueues_model(self):
         message = SimpleNamespace(text="/оцени RTX 3070", reply=AsyncMock())
         requests = SimpleNamespace(enqueue=AsyncMock(return_value=EnqueueResult.ACCEPTED))
-        await cmd_price(message, requests)
-        requests.enqueue.assert_awaited_once_with(message, force_price_query="RTX 3070")
-        with (
-            patch("sanya.handlers.hardware.ENABLE_WEB_SEARCH", True),
-            patch(
-                "sanya.handlers.hardware.perform_web_search", AsyncMock(return_value=[])
-            ),
-        ):
-            await send_price_estimate(message, "RTX 3070")
-        self.assertIn("выдумывать не буду", message.reply.await_args.args[0])
+        await cmd_gpu_review(message, requests)
+        requests.enqueue.assert_awaited_once_with(message, force_gpu_query="RTX 3070")
+
+    async def test_gpu_review_without_model_shows_usage(self):
+        message = SimpleNamespace(text="/оцени", reply=AsyncMock())
+        requests = SimpleNamespace(enqueue=AsyncMock())
+        await cmd_gpu_review(message, requests)
+        requests.enqueue.assert_not_awaited()
+        self.assertIn("/оцени RTX 3070", message.reply.await_args.args[0])
 
 
 class FeatureUnitTests(unittest.TestCase):
@@ -205,27 +199,6 @@ class FeatureUnitTests(unittest.TestCase):
             self.assertNotIn(
                 "Q4_K_M", build_system_prompt(Mode.CHAT, "как ollama запустить")
             )
-
-    def test_listing_parser_excludes_variants_duplicates_and_other_sites(self):
-        url = "https://www.avito.ru/test/rtx_3070_123456"
-        result = listing_prices(
-            [
-                {
-                    "href": url + "?tracking=123",
-                    "title": "MSI RTX 3070",
-                    "body": "25 000 ₽",
-                },
-                {"url": url, "title": "RTX 3070 25 000 ₽"},
-                {"url": url + "7", "title": "RTX 3070 Ti 30 000 ₽"},
-                {"url": url + "8", "title": "Кулер для RTX 3070 2000 ₽"},
-                {
-                    "url": "https://avito.ru.example.com/rtx_3070_999999",
-                    "title": "RTX 3070 18 000 ₽",
-                },
-            ],
-            "RTX 3070",
-        )
-        self.assertEqual(result, [(25000, url)])
 
     def test_database_schema_channel_dedup_and_200_per_chat(self):
         with closing(sqlite3.connect(":memory:")) as conn:

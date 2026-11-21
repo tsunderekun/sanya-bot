@@ -98,6 +98,7 @@ class Ollama:
         *,
         complete: bool = False,
         system_prompt: str = SYSTEM_PROMPT,
+        short_answer: bool = False,
     ) -> str:
         try:
             context = fit_prompt({"role": "system", "content": system_prompt}, messages)
@@ -113,9 +114,12 @@ class Ollama:
                 else (NUM_PREDICT_THINK, NUM_PREDICT_CHAT, 0.75)
             )
         )
+        if short_answer:
+            off = 420
+        thinking = (True, False) if ENABLE_THINKING and not short_answer else (False,)
         async with self._lock:
             try:
-                for think in (True, False) if ENABLE_THINKING else (False,):
+                for think in thinking:
                     content, reason = await self._post(
                         {
                             "model": MODEL_NAME,

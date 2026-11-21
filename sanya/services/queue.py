@@ -34,7 +34,7 @@ class Request:
     force_image_query: str | None = None
     force_booru_query: str | None = None
     is_proactive: bool = False
-    force_price_query: str | None = None
+    force_gpu_query: str | None = None
     booru_confirmed: bool = False
     slop: bool = False
     force_generation: tuple[Mode, str] | None = None
@@ -45,8 +45,8 @@ class Request:
     def kind(self) -> str:
         if self.prompt_idea:
             return "prompt_idea"
-        if self.force_price_query:
-            return "price"
+        if self.force_gpu_query:
+            return "gpu_review"
         if self.force_booru_query:
             return "slop" if self.slop else "booru"
         if self.force_image_query:
@@ -60,9 +60,7 @@ class Request:
 
 class RequestQueue:
     def __init__(self):
-        self._queue: asyncio.Queue[Request] = asyncio.Queue(
-            maxsize=max(1, MAX_QUEUE_SIZE)
-        )
+        self._queue: asyncio.Queue[Request] = asyncio.Queue(maxsize=max(1, MAX_QUEUE_SIZE))
         self._last_request: dict[int, float] = {}
         self.last_proactive: dict[int, float] = {}
         self.proactive_history: dict[int, list[float]] = {}
@@ -108,8 +106,8 @@ class RequestQueue:
                         else {}
                     ),
                     **(
-                        {"force_price_query": item.force_price_query}
-                        if item.force_price_query
+                        {"force_gpu_query": item.force_gpu_query}
+                        if item.force_gpu_query
                         else {}
                     ),
                     **({"prompt_idea": True} if item.prompt_idea else {}),

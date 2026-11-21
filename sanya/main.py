@@ -103,9 +103,8 @@ async def main():
         llm = Ollama(client)
         requests = RequestQueue()
         meme_precache = memes.MemePrecache()
-        worker = asyncio.create_task(
-            requests.work(partial(process_chat_message, bot=bot, db=db, llm=llm))
-        )
+        process = partial(process_chat_message, bot=bot, db=db, llm=llm)
+        worker = asyncio.create_task(requests.work(process))
         sync = asyncio.create_task(sync_sticker_packs(bot, db))
         try:
             await build_dispatcher().start_polling(
@@ -121,7 +120,10 @@ async def main():
             worker.cancel()
             sync.cancel()
             await asyncio.gather(
-                worker, sync, meme_precache.close(), return_exceptions=True
+                worker,
+                sync,
+                meme_precache.close(),
+                return_exceptions=True,
             )
 
 

@@ -13,7 +13,6 @@ from aiogram.types import BufferedInputFile
 
 from ..config import CHAT_STICKER_CHANCE, ENABLE_WEB_SEARCH, ORIGINAL_SANYA_ID
 from ..database import Database
-from ..handlers.hardware import send_price_estimate
 from ..intent import (
     BANTER_PATTERN,
     BOORU_REQUEST_PATTERN,
@@ -101,6 +100,15 @@ _PROMPT_IDEA_MINOR = re.compile(
     r"(?:1[0-7])[- ]year[- ]old)\b",
     re.I,
 )
+_GPU_REVIEW_LIMIT = 900
+_GPU_REVIEW_PROMPT = (
+    "Кратко оцени возможности указанной видеокарты по-русски. Сразу дай три коротких пункта, "
+    "по одному предложению в каждом: **Игры:** подходящие разрешения и настройки; "
+    "**Ограничения:** объём VRAM, если известен для этой версии, и влияние трассировки лучей, если уместно; "
+    "**Работа:** подходящие задачи и ограничения. Цель — до 500 символов. "
+    "Без вступления, повторного итога, цен и объявлений. Не выдумывай FPS, замеры или характеристики. "
+    "Если модель неясна или это не видеокарта, задай один короткий уточняющий вопрос."
+)
 
 
 def automatic_sticker(level: int | None, default: float) -> bool:
@@ -116,7 +124,7 @@ async def process_chat_message(
     force_booru_query: Optional[str] = None,
     is_proactive: bool = False,
     *,
-    force_price_query: str | None = None,
+    force_gpu_query: str | None = None,
     booru_confirmed: bool = False,
     slop: bool = False,
     force_generation: tuple[Mode, str] | None = None,
@@ -147,10 +155,6 @@ async def process_chat_message(
     has_reply_sticker = bool(
         message.reply_to_message and message.reply_to_message.sticker
     )
-
-    if force_price_query:
-        await send_price_estimate(message, force_price_query)
-        return
 
     address_text = message.text or message.caption or ""
     raw_text = address_text
@@ -195,6 +199,7 @@ async def process_chat_message(
         or force_image_query
         or force_booru_query
         or force_generation
+        or force_gpu_query
     )
     if not should_respond:
         return
@@ -237,6 +242,8 @@ async def process_chat_message(
     clean_text = clean_text.strip()
     if force_generation:
         clean_text = force_generation[1]
+    elif force_gpu_query:
+        clean_text = f"Оцени возможности видеокарты: {force_gpu_query}"
 
     if (
         safe
@@ -257,7 +264,7 @@ async def process_chat_message(
         return
     mode = (
         Mode.DETAIL
-        if force_search_query
+        if force_search_query or force_gpu_query
         else force_generation[0]
         if force_generation
         else classify_intent(clean_text, reply_quote_prefix)
@@ -301,6 +308,7 @@ async def process_chat_message(
             or force_search_query
             or force_image_query
             or force_booru_query
+            or force_gpu_query
         )
         and not (has_photo or has_reply_photo or has_sticker or has_reply_sticker)
         and not clean_text.startswith("/")
@@ -356,7 +364,9 @@ async def process_chat_message(
                 )
                 return
 
-    infer_media = mode not in (Mode.CODE, Mode.PROMPT) and not force_search_query
+    infer_media = mode not in (Mode.CODE, Mode.PROMPT) and not (
+        force_search_query or force_gpu_query
+    )
     # --- 1. Отправка картинок из поиска и Booru/R34 ---
     booru_search_query = force_booru_query
     if (
@@ -679,7 +689,13 @@ async def process_chat_message(
     user_id = message.from_user.id
     explicit = re.match(r"(?:погугли|загугли|найди|чекни)\s+(.+)", query_text, re.I)
     plain_chat = (
-        not (force_search_query or force_image_query or force_booru_query or explicit)
+        not (
+            force_search_query
+            or force_image_query
+            or force_booru_query
+            or force_gpu_query
+            or explicit
+        )
         and mode in (Mode.CHAT, Mode.DETAIL)
         and not (image_desc or ocr_text)
     )
@@ -733,7 +749,8 @@ async def process_chat_message(
 
     async def send_answer(text: str, *, detailed: bool = False):
         sent_ids = await send_burst_messages(
-            bot, chat_id, message.message_id, text, is_detailed=detailed
+            bot, chat_id, message.message_id, text, is_detailed=detailed,
+            **({"compact": True} if force_gpu_query else {}),
         )
         await db.run(
             Repository.save_chat_answer,
@@ -769,7 +786,7 @@ async def process_chat_message(
     if not force_generation:
         model_text = strip_leading_bot_call(query_text) or query_text
     current = model_text if is_private else f"[{sender_name}]: {model_text}"
-    insult = not force_search_query and is_targeted_insult(
+    insult = not (force_search_query or force_gpu_query) and is_targeted_insult(
         query_text,
         addressed=is_reply_to_bot or is_called_by_name or is_mentioned or is_private,
     )
@@ -789,7 +806,7 @@ async def process_chat_message(
     recall = plain_chat and bool(_DIALOGUE_RECALL.search(model_text))
     if recall:
         rofl = False
-    can_search = not recall and may_search(
+    can_search = not (recall or force_gpu_query) and may_search(
         mode, enabled=ENABLE_WEB_SEARCH, insult=insult
     )
     search_query = (
@@ -799,15 +816,17 @@ async def process_chat_message(
     stop_typing = asyncio.Event()
     typing_task = asyncio.create_task(keep_typing(bot, chat_id, stop_typing))
     try:
-        notes, lore_question = await dialogue_notes(
-            db,
-            message,
-            query_text,
-            include_kents=lore_allowed and not insult,
-            include_notes=not (force_search_query or explicit or insult)
-            and mode not in (Mode.CODE, Mode.PROMPT),
-            lore_level=style.lore,
-        )
+        notes, lore_question = ([], False)
+        if not force_gpu_query:
+            notes, lore_question = await dialogue_notes(
+                db,
+                message,
+                query_text,
+                include_kents=lore_allowed and not insult,
+                include_notes=not (force_search_query or explicit or insult)
+                and mode not in (Mode.CODE, Mode.PROMPT),
+                lore_level=style.lore,
+            )
         if safe and (story or definition):
             notes.extend(note for note in (story, definition) if note)
             lore_question = True
@@ -878,18 +897,25 @@ async def process_chat_message(
             directives.append(
                 "Пользователь просит только код: верни один блок без текста вокруг."
             )
-        system_prompt = build_system_prompt(
-            mode,
-            query_text,
-            *directives,
-            rofl=rofl,
-            style=style,
-            explicit_lore=lore_question or lore_requested,
-            safe_voice=SAFE_VOICE if safe else "",
-        )
+        if force_gpu_query:
+            system_prompt = _GPU_REVIEW_PROMPT
+            if re.fullmatch(r"(?:(?:nvidia|geforce)\s+)*rtx\s*3070", force_gpu_query, re.I):
+                system_prompt += " У настольной RTX 3070 — 8 ГБ GDDR6."
+            if safe:
+                system_prompt += " " + SAFE_VOICE
+        else:
+            system_prompt = build_system_prompt(
+                mode,
+                query_text,
+                *directives,
+                rofl=rofl,
+                style=style,
+                explicit_lore=lore_question or lore_requested,
+                safe_voice=SAFE_VOICE if safe else "",
+            )
 
         history = []
-        if not lore_question and not force_search_query:
+        if not (lore_question or force_search_query or force_gpu_query):
             rows = branch_history
             if reply_to_id is None:
                 rows = await db.run(
@@ -928,9 +954,9 @@ async def process_chat_message(
         async def generate(search: str = "", correction: str = ""):
             turn = build_turn(
                 current,
-                notes=notes,
+                notes=[] if force_gpu_query else notes,
                 search=search,
-                thread="" if lore_question else thread,
+                thread="" if lore_question or force_gpu_query else thread,
             )
             raw = await llm.generate(
                 [turn] if lore_question else [*history, turn],
@@ -939,10 +965,17 @@ async def process_chat_message(
                 complete=True,
                 system_prompt=system_prompt
                 + ("\n\n" + correction if correction else ""),
+                **({"short_answer": True} if force_gpu_query else {}),
             )
             return (*clean_response(raw, mode, code_only=code_only), raw)
 
         result, emoji, sticker, raw = await generate(search_context)
+
+        def valid_result(text: str) -> bool:
+            return valid_output(text, mode) and (
+                not force_gpu_query or len(text) <= _GPU_REVIEW_LIMIT
+            )
+
         if (
             can_search
             and not rofl
@@ -960,14 +993,16 @@ async def process_chat_message(
             if snippets:
                 search_context = snippets
                 result, emoji, sticker, _ = await generate(search_context)
-        if not valid_output(result, mode) or (safe and not safe_reply(result)):
+        if not valid_result(result) or (safe and not safe_reply(result)):
             logging.info(
                 "Reply render rejected mode=%s rofl=%s empty_raw=%s; retrying",
                 mode.name,
                 rofl,
                 not raw.strip(),
             )
-            if mode is Mode.PROMPT:
+            if force_gpu_query:
+                correction = "Сократи ответ до трёх коротких пунктов, всего до 500 символов."
+            elif mode is Mode.PROMPT:
                 sections = prompt_sections(raw)
                 missing = [
                     label
@@ -1015,7 +1050,7 @@ async def process_chat_message(
                 if style.tone == 0
                 else "Че за фимозные фантазии\nСам с ними разбирайся"
             )
-        if not valid_output(result, mode):
+        if not valid_result(result):
             logging.warning("Reply render fallback mode=%s rofl=%s", mode.name, rofl)
             sticker = False
             suppress_auto_sticker = True
@@ -1023,6 +1058,8 @@ async def process_chat_message(
                 Mode.CODE: "Скрипт целиком не собрался\nДавай разобьём задачу на части",
                 Mode.PROMPT: "Не получилось собрать обе части промпта на английском. Попробуй ещё раз.",
             }.get(mode, CHAT_FALLBACK)
+            if force_gpu_query:
+                result = "Не получилось собрать короткую оценку видеокарты. Попробуй ещё раз."
         if safe and (suppress_auto_sticker or not safe_reply(result)):
             result = (
                 "Не буду продолжать в таком тоне. Могу помочь с вопросом по существу."

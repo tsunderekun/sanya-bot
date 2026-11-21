@@ -73,6 +73,10 @@ def _table_inline(text: str, *, rich: bool = True) -> str:
     return "".join(parts)
 
 
+def render_compact_reply(text: str) -> str:
+    return "\n".join(_table_inline(line) for line in text.splitlines())
+
+
 def _table_prose(text: str) -> tuple[str, str]:
     rich, plain, paragraph, bullets = [], [], [], []
 

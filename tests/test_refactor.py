@@ -30,6 +30,21 @@ def turn(text, role="user"):
 
 
 class GenerationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_short_answer_uses_small_budget_without_thinking(self):
+        requests = []
+
+        def server(request):
+            requests.append(json.loads(request.content))
+            return httpx.Response(200, json={"message": {"content": "Коротко"}, "done_reason": "stop"})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(server)) as client:
+            with patch("sanya.llm.ENABLE_THINKING", True):
+                answer = await Ollama(client).generate([turn("RTX 3070")], short_answer=True)
+        self.assertEqual(answer, "Коротко")
+        self.assertEqual(len(requests), 1)
+        self.assertFalse(requests[0]["think"])
+        self.assertEqual(requests[0]["options"]["num_predict"], 420)
+
     async def test_empty_thinking_fallback_keeps_code_budget(self):
         requests = []
 

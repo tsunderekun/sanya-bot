@@ -67,6 +67,18 @@ class TableTests(unittest.IsolatedAsyncioTestCase):
             bot.send_rich_message.await_args.kwargs["reply_parameters"].message_id, 2
         )
 
+    async def test_compact_reply_formats_all_paragraphs_in_one_message(self):
+        send = AsyncMock(return_value=SimpleNamespace(message_id=10))
+        text = "**Игры:** 1440p\n\n**Ограничения:** 8 ГБ\n\n**Работа:** Blender & <монтаж>"
+        ids = await send_burst_messages(SimpleNamespace(send_message=send), 1, 2, text, compact=True)
+        self.assertEqual(ids, [10])
+        send.assert_awaited_once()
+        self.assertEqual(
+            send.await_args.args[1],
+            "<b>Игры:</b> 1440p\n\n<b>Ограничения:</b> 8 ГБ\n\n<b>Работа:</b> Blender &amp; &lt;монтаж&gt;",
+        )
+        self.assertEqual(send.await_args.kwargs["reply_parameters"].message_id, 2)
+
     async def test_unsupported_or_rejected_rich_message_falls_back_to_full_list(self):
         for unsupported in (True, False):
             with self.subTest(unsupported=unsupported):

@@ -6,7 +6,12 @@ from aiogram import Bot, types
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
 from aiogram.types import BufferedInputFile, ReplyParameters
 
-from .render import needs_document, render_messages, render_table_reply
+from .render import (
+    needs_document,
+    render_compact_reply,
+    render_messages,
+    render_table_reply,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +30,13 @@ async def keep_typing(bot: Bot, chat_id: int, stop_event: asyncio.Event):
 
 
 async def send_burst_messages(
-    bot: Bot, chat_id: int, reply_to_id: int, text: str, is_detailed: bool = False
+    bot: Bot,
+    chat_id: int,
+    reply_to_id: int,
+    text: str,
+    is_detailed: bool = False,
+    *,
+    compact: bool = False,
 ) -> list[int]:
     """Отправляет ответ без обрезки кода и возвращает ID отправленных частей."""
     reply = (
@@ -33,6 +44,14 @@ async def send_burst_messages(
         if reply_to_id
         else None
     )
+    if compact:
+        sent = await bot.send_message(
+            chat_id,
+            render_compact_reply(text),
+            parse_mode="HTML",
+            reply_parameters=reply,
+        )
+        return [sent.message_id]
     if table := render_table_reply(text):
         rich_html, fallback = table
         rich_type = getattr(types, "InputRichMessage", None)

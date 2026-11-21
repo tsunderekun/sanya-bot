@@ -37,9 +37,12 @@ class RequestQueueTests(unittest.IsolatedAsyncioTestCase):
             try:
                 await asyncio.wait_for(started.wait(), timeout=2)
                 now = 11.0
-                self.assertIs(await queue.enqueue(first), EnqueueResult.COOLDOWN)
                 self.assertIs(
-                    await queue.enqueue(second, force_search_query="private search"),
+                    await queue.enqueue(first, force_gpu_query="RTX 3070"),
+                    EnqueueResult.COOLDOWN,
+                )
+                self.assertIs(
+                    await queue.enqueue(second, force_gpu_query="RTX 3070"),
                     EnqueueResult.ACCEPTED,
                 )
                 self.assertIs(await queue.enqueue(third), EnqueueResult.FULL)
@@ -51,6 +54,7 @@ class RequestQueueTests(unittest.IsolatedAsyncioTestCase):
                     [call.kwargs["message"] for call in processor.await_args_list],
                     [first, second],
                 )
+                self.assertEqual(processor.await_args.kwargs["force_gpu_query"], "RTX 3070")
             finally:
                 worker.cancel()
                 await asyncio.gather(worker, return_exceptions=True)
@@ -59,6 +63,6 @@ class RequestQueueTests(unittest.IsolatedAsyncioTestCase):
             [record.getMessage() for record in logs.records],
             [
                 "request_queue kind=chat outcome=ok wait_ms=0.0 processing_ms=3000.0",
-                "request_queue kind=search outcome=ok wait_ms=2000.0 processing_ms=250.0",
+                "request_queue kind=gpu_review outcome=ok wait_ms=2000.0 processing_ms=250.0",
             ],
         )
