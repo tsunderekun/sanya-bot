@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from sanya.database import Database
 from sanya.intent import Mode, classify_intent, is_targeted_insult
-from sanya.prompts import build_system_prompt
+from sanya.prompts import TOPIC_GUIDANCE, build_system_prompt
 from sanya.repository import Repository
 from sanya.schema import initialize
 from sanya.services.chat import process_chat_message
@@ -35,6 +35,13 @@ class GeneralChatTests(unittest.TestCase):
         self.assertIn("не своди разговор к железу", prompt)
         self.assertIn("Дружеский стёб подхвати", prompt)
         self.assertIn("не склеивай мат и мемы", prompt)
+
+    def test_topic_and_uncertainty_guidance_is_limited_to_conversation(self):
+        for mode in Mode:
+            with self.subTest(mode=mode):
+                prompt = build_system_prompt(mode, "А если вечером похолодает?")
+                self.assertEqual(TOPIC_GUIDANCE in prompt, mode in (Mode.CHAT, Mode.DETAIL))
+        self.assertNotIn(TOPIC_GUIDANCE, build_system_prompt(Mode.CHAT, safe_voice="Без мата."))
 
     def test_dossier_count_excludes_other_chats_users_and_bot_replies(self):
         with closing(sqlite3.connect(":memory:")) as conn:
@@ -66,6 +73,43 @@ class GeneralChatTests(unittest.TestCase):
 
 
 class ChatContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_topic_deflection_retries_once_without_old_history(self):
+        with tempfile.TemporaryDirectory() as root:
+            async with Database(Path(root) / "topic.db") as db:
+                await db.run(
+                    Repository.save_message, 1, 1, None, 42, "kent", "user",
+                    "Стоит ли менять RTX 3070?",
+                )
+                message = SimpleNamespace(
+                    chat=SimpleNamespace(id=1, type="private"), message_id=2,
+                    from_user=SimpleNamespace(id=42, username="kent"),
+                    text="Как сварить рис рассыпчатым?", caption=None,
+                    photo=None, sticker=None, reply_to_message=None,
+                )
+                bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(
+                    id=9, username="ponyeb228_bot",
+                )))
+                off_topic = "У меня башка только на железо настроена"
+                on_topic = "Промой рис и вари на слабом огне под крышкой"
+                for first_reply, retry, expected in (
+                    (off_topic, on_topic, on_topic),
+                    ("Я про железо спросил", off_topic, "Чёт ответ не собрался"),
+                ):
+                    with self.subTest(retry=retry):
+                        llm = SimpleNamespace(generate=AsyncMock(side_effect=[first_reply, retry]))
+                        with (
+                            patch("sanya.services.chat.send_burst_messages", AsyncMock(return_value=[])) as send,
+                            patch("sanya.services.chat.keep_typing", AsyncMock()),
+                            patch("sanya.services.chat.lookup_snippets", AsyncMock()) as search,
+                        ):
+                            await process_chat_message(message, bot, db=db, llm=llm)
+                        first, second = llm.generate.await_args_list
+                        self.assertIn("RTX 3070", first.args[0][0]["content"])
+                        self.assertEqual(second.args[0], first.args[0][-1:])
+                        self.assertEqual(send.await_args.args[3], expected)
+                        search.assert_not_awaited()
+                        message.message_id += 1
+
     async def test_auto_stickers_roll_once_per_chat_answer_without_model_hint(self):
         with tempfile.TemporaryDirectory() as root:
             async with Database(Path(root) / "stickers.db") as db:

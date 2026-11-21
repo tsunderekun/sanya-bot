@@ -101,6 +101,14 @@ _PROMPT_IDEA_MINOR = re.compile(
     r"(?:1[0-7])[- ]year[- ]old)\b",
     re.I,
 )
+_TOPIC_DEFLECTION = re.compile(
+    r"\b(?:я\s+(?:только\s+)?(?:по|про|за)\s+(?:желез\w*|сет[ия]\w*|пайк\w*)"
+    r"[^.!?\n]{0,65}\b(?:шарю|говорю|базарю)|"
+    r"я\s+про\s+железо\s+спросил|"
+    r"(?:башка|голова)\s+[^.!?\n]{0,35}\b(?:только|забита)\s+"
+    r"[^.!?\n]{0,35}\b(?:желез\w*|график\w*|чип\w*))\b",
+    re.I,
+)
 _GPU_REVIEW_LIMIT = 900
 _GPU_REVIEW_PROMPT = (
     "Кратко оцени возможности указанной видеокарты по-русски. Сразу дай три коротких пункта, "
@@ -997,7 +1005,9 @@ async def process_chat_message(
                 "за подтверждение по официальной таблице; подписывай сторонние источники."
             )
 
-        async def generate(search: str = "", correction: str = ""):
+        async def generate(
+            search: str = "", correction: str = "", *, use_history: bool = True
+        ):
             turn = build_turn(
                 current,
                 notes=[] if force_gpu_query else notes,
@@ -1006,7 +1016,7 @@ async def process_chat_message(
             )
             generation_started = monotonic()
             raw = await llm.generate(
-                [turn] if lore_question else [*history, turn],
+                [turn] if lore_question or not use_history else [*history, turn],
                 is_detailed_request=mode is not Mode.CHAT,
                 is_coding_request=mode is Mode.CODE,
                 complete=True,
@@ -1022,10 +1032,15 @@ async def process_chat_message(
             return (*clean_response(raw, mode, code_only=code_only), raw)
 
         result, emoji, sticker, raw = await generate(search_context)
+        check_topic = plain_chat and not (
+            safe or rofl or insult or recall or lore_question or lore_requested
+        )
 
         def valid_result(text: str) -> bool:
-            return valid_output(text, mode) and (
-                not force_gpu_query or len(text) <= _GPU_REVIEW_LIMIT
+            return (
+                valid_output(text, mode)
+                and not (check_topic and _TOPIC_DEFLECTION.search(text))
+                and (not force_gpu_query or len(text) <= _GPU_REVIEW_LIMIT)
             )
 
         if (
@@ -1038,6 +1053,7 @@ async def process_chat_message(
             and not thread
             and reply_to_id is None
             and not BANTER_PATTERN.search(query_text)
+            and not (check_topic and _TOPIC_DEFLECTION.search(result))
             and UNCERTAINTY_PATTERN.search(raw)
             and ("?" in query_text or SEARCH_TRIGGER_PATTERN.search(query_text))
         ):
@@ -1052,7 +1068,13 @@ async def process_chat_message(
                 rofl,
                 not raw.strip(),
             )
-            if force_gpu_query:
+            deflected = bool(check_topic and _TOPIC_DEFLECTION.search(result))
+            if deflected:
+                correction = (
+                    "Сразу ответь на текущую тему. Не перечисляй свои специализации. "
+                    "Если не знаешь конкретной детали, скажи какой и помоги с остальным."
+                )
+            elif force_gpu_query:
                 correction = "Сократи ответ до трёх коротких пунктов, всего до 500 символов."
             elif mode is Mode.PROMPT:
                 sections = prompt_sections(raw)
@@ -1082,7 +1104,9 @@ async def process_chat_message(
                 correction += (
                     " Отвечай дружелюбно, без мата и подколов, не повторяй оскорбления."
                 )
-            result, emoji, sticker, _ = await generate(search_context, correction)
+            result, emoji, sticker, _ = await generate(
+                search_context, correction, use_history=not deflected
+            )
         suppress_auto_sticker = bool(
             mode is Mode.CHAT
             and re.search(
