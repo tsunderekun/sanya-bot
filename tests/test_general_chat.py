@@ -93,6 +93,12 @@ class ChatContextTests(unittest.IsolatedAsyncioTestCase):
                 on_topic = "Промой рис и вари на слабом огне под крышкой"
                 for first_reply, retry, expected in (
                     (off_topic, on_topic, on_topic),
+                    (
+                        "Слушай ну ты меня достал уже своими кулинарными изысканиями "
+                        "а я тут про железо и графику\nТочных пропорций не знаю",
+                        on_topic,
+                        on_topic,
+                    ),
                     ("Я про железо спросил", off_topic, "Чёт ответ не собрался"),
                 ):
                     with self.subTest(retry=retry):

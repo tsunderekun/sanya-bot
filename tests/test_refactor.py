@@ -160,6 +160,20 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(clean_response("[С этим матрасом всё понятно]", Mode.DETAIL)[0], "С этим матрасом всё понятно")
         self.assertEqual(clean_response("[Вымысел из режима рофла]\n[стикер: 😁]", Mode.CHAT)[0], "")
 
+    def test_render_drops_known_prompt_echo_without_losing_answer(self):
+        answer = (
+            "Точных пропорций не знаю\n"
+            "Начни с похожей глазури\n"
+            "Сравни цвет по фото\n"
+            "Подбери густоту на маленькой порции"
+        )
+        for mode in (Mode.CHAT, Mode.DETAIL):
+            with self.subTest(mode=mode):
+                self.assertEqual(clean_response("Байку обозначь словами.\n" + answer, mode)[0], answer)
+                self.assertFalse(valid_output(clean_response("Байку обозначь словами", mode)[0], mode))
+                quote = 'Фраза «Байку обозначь словами» звучит как инструкция'
+                self.assertEqual(clean_response(quote, mode)[0], quote)
+
     def test_render_strips_leaked_html_without_touching_code(self):
         for mode in (Mode.CHAT, Mode.DETAIL):
             for reply in (

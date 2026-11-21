@@ -26,6 +26,10 @@ _HTML_WRAPPER = re.compile(
     re.I,
 )
 BRACKETS = str.maketrans("", "", "[]")
+# Known prompt echo: drop only the whole line, not ordinary talk about байки.
+_CHAT_PROMPT_ECHO = re.compile(
+    r"^[ \t]*байку обозначь словами[.!…]*[ \t]*(?:\r?\n|\Z)", re.I | re.M
+)
 _PROMPT_LABEL = re.compile(
     r"^[ \t]*(?:#{1,6}[ \t]+)?\*{0,2}"
     r"(?:(?P<positive>positive prompt|позитивный промпт|положительный промпт|prompt)"
@@ -287,6 +291,7 @@ def clean_response(
             # Keep the actual joke or explanation, not its formatting wrappers.
             body = re.sub(r"\[([^\[\]\n]+)\]\((https?://[^\s)]+)\)", r"\1 (\2)", body)
             body = body.translate(BRACKETS)
+            body = _CHAT_PROMPT_ECHO.sub("", body)
         if mode is Mode.CHAT and not any(
             kind == "table" for kind, _ in _table_parts(body)
         ):
