@@ -335,17 +335,67 @@ def valid_output(text: str, mode: Mode) -> bool:
     return False
 
 
+_MESSAGE_BUDGET = 3800
+
+
+def _utf16_length(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _split_prose(text: str):
+    while _utf16_length(text) > _MESSAGE_BUDGET:
+        # Slice before escaping to keep HTML entities and tags intact.
+        units = end = 0
+        for char in text[:_MESSAGE_BUDGET]:
+            units += 1 + (ord(char) > 0xFFFF)
+            if units > _MESSAGE_BUDGET:
+                break
+            end += 1
+        cut = text.rfind("\n", end // 2, end + 1)
+        if cut < 0:
+            cut = text.rfind(" ", end // 2, end + 1)
+        if cut < 0:
+            cut = end
+        for match in _TABLE_INLINE.finditer(text):
+            if match.start() >= cut:
+                break
+            if match.start() and match.start() < cut < match.end():
+                cut = match.start()
+                break
+        yield text[:cut].rstrip()
+        text = text[cut:].lstrip()
+    if text:
+        yield text
+
+
+def _pack_prose(body: str) -> list[str]:
+    chunks = []
+    page = []
+    used = 0
+    for paragraph in re.split(r"\n\s*\n", body.strip()):
+        for part in _split_prose(paragraph):
+            if not (rendered := render_compact_reply(part)):
+                continue
+            size = _utf16_length(part)
+            if page and used + 2 + size > _MESSAGE_BUDGET:
+                chunks.append("\n\n".join(page))
+                page = []
+                used = 0
+            used += size + (2 if page else 0)
+            page.append(rendered)
+    if page:
+        chunks.append("\n\n".join(page))
+    return chunks
+
+
 def render_messages(text: str, *, detailed: bool) -> list[str]:
     if not detailed:
         return [line for line in render_compact_reply(text).splitlines() if line.strip()][:4]
     chunks = []
     for lang, body in _parts(text):
         if lang is None:
-            for paragraph in re.split(r"\n\s*\n", body.strip()):
-                for i in range(0, len(paragraph), 1900):
-                    if rendered := render_compact_reply(paragraph[i : i + 1900]):
-                        chunks.append(rendered)
-        elif len(body.encode("utf-16-le")) // 2 <= 3800:
+            chunks.extend(_pack_prose(body))
+        elif _utf16_length(body) <= _MESSAGE_BUDGET:
             chunks.append(
                 f'<pre><code class="language-{lang}">{html.escape(body)}</code></pre>'
             )
@@ -354,6 +404,6 @@ def render_messages(text: str, *, detailed: bool) -> list[str]:
 
 def needs_document(text: str) -> bool:
     return any(
-        lang is not None and len(body.encode("utf-16-le")) // 2 > 3800
+        lang is not None and _utf16_length(body) > _MESSAGE_BUDGET
         for lang, body in _parts(text)
     )

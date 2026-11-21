@@ -23,6 +23,37 @@ TABLE = (
 
 
 class TableTests(unittest.IsolatedAsyncioTestCase):
+    async def test_detailed_reply_sends_multiple_paragraphs_as_one_message(self):
+        send = AsyncMock(return_value=SimpleNamespace(message_id=10))
+        bot = SimpleNamespace(send_message=send)
+        text = "**Игры**\n\n* RTX 3070\n* RX 6700 XT\n\n**Вывод:** зависит от настроек"
+        self.assertEqual(await send_burst_messages(bot, 1, 2, text, is_detailed=True), [10])
+        send.assert_awaited_once()
+        self.assertEqual(
+            send.await_args.args[1],
+            "<b>Игры</b>\n\n• RTX 3070\n• RX 6700 XT\n\n<b>Вывод:</b> зависит от настроек",
+        )
+
+    def test_detailed_reply_splits_on_paragraphs_at_utf16_budget(self):
+        paragraph = "😀" * 1000
+        self.assertEqual(
+            render_messages(f"Начало\n\n{paragraph}\n\n{paragraph}\n\nКонец", detailed=True),
+            [f"Начало\n\n{paragraph}", f"{paragraph}\n\nКонец"],
+        )
+
+    def test_long_prose_keeps_inline_formatting_at_split(self):
+        prefix = "x" * 3796
+        self.assertEqual(
+            render_messages(prefix + " **важно** & дальше", detailed=True),
+            [prefix, "<b>важно</b> &amp; дальше"],
+        )
+
+    def test_detailed_reply_keeps_code_block_separate(self):
+        self.assertEqual(
+            render_messages("Вступление\n\n```python\nprint(1 < 2)\n```\n\nИтог", detailed=True),
+            ["Вступление", '<pre><code class="language-python">print(1 &lt; 2)\n</code></pre>', "Итог"],
+        )
+
     def test_formats_markdown_without_tables_and_escapes_html(self):
         text = "**Плюсы:**\n* `x < 5` & *быстро*\n***\n1. **Итог** <tag>"
         expected = ["<b>Плюсы:</b>", "• <code>x &lt; 5</code> &amp; <i>быстро</i>", "1. <b>Итог</b> &lt;tag&gt;"]
