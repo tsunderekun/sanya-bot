@@ -18,7 +18,6 @@ from sanya.handlers.hardware import (
 )
 from sanya.handlers.memes import (
     cmd_meme,
-    cmd_precache,
     collect_channel_post,
     maybe_send_horse,
     preview_media,
@@ -29,22 +28,10 @@ from sanya.repository import Repository
 from sanya.schema import initialize
 from sanya.services.booru import parse_tags, search_and_download_booru_image
 from sanya.services.ocr import recognize_image_text
+from sanya.services.queue import EnqueueResult
 
 
 class FeatureTests(unittest.IsolatedAsyncioTestCase):
-    async def test_precache_status_distinguishes_scanned_added_and_total(self):
-        status = SimpleNamespace(edit_text=AsyncMock())
-        message = SimpleNamespace(text="/прекэш", reply=AsyncMock(return_value=status))
-        with patch(
-            "sanya.handlers.memes.precache_channel_memes",
-            AsyncMock(return_value={"found": 12, "new": 0, "total": 92}),
-        ):
-            await cmd_precache(message, SimpleNamespace(), SimpleNamespace())
-        reply = status.edit_text.await_args.args[0]
-        self.assertIn("Просмотрел 12 постов", reply)
-        self.assertIn("новых добавил: 0", reply)
-        self.assertIn("Всего в пуле: 92", reply)
-
     async def test_channel_media_without_caption_and_protected_post_skipped(self):
         db = SimpleNamespace(run=AsyncMock())
         message = SimpleNamespace(
@@ -175,7 +162,7 @@ class FeatureTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_price_refuses_to_guess_without_enough_listings(self):
         message = SimpleNamespace(text="/оцени RTX 3070", reply=AsyncMock())
-        requests = SimpleNamespace(enqueue=AsyncMock(return_value=True))
+        requests = SimpleNamespace(enqueue=AsyncMock(return_value=EnqueueResult.ACCEPTED))
         await cmd_price(message, requests)
         requests.enqueue.assert_awaited_once_with(message, force_price_query="RTX 3070")
         with (

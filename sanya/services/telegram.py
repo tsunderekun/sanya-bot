@@ -1,10 +1,14 @@
 import asyncio
+import logging
 import random
 
-from aiogram import Bot
+from aiogram import Bot, types
+from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
 from aiogram.types import BufferedInputFile, ReplyParameters
 
-from .render import needs_document, render_messages
+from .render import needs_document, render_messages, render_table_reply
+
+logger = logging.getLogger(__name__)
 
 
 async def keep_typing(bot: Bot, chat_id: int, stop_event: asyncio.Event):
@@ -29,6 +33,22 @@ async def send_burst_messages(
         if reply_to_id
         else None
     )
+    if table := render_table_reply(text):
+        rich_html, fallback = table
+        rich_type = getattr(types, "InputRichMessage", None)
+        send_rich = getattr(bot, "send_rich_message", None)
+        if rich_type is not None and send_rich is not None:
+            try:
+                sent = await send_rich(
+                    chat_id,
+                    rich_type(html=rich_html, skip_entity_detection=True),
+                    reply_parameters=reply,
+                )
+            except (TelegramBadRequest, TelegramNotFound):
+                logger.info("Telegram отклонил таблицу; отправляю список")
+            else:
+                return [sent.message_id]
+        text, is_detailed = fallback, True
     if is_detailed and needs_document(text):
         sent = await bot.send_document(
             chat_id,

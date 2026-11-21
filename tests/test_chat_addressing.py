@@ -8,6 +8,7 @@ from sanya.handlers.chat import handle_message
 from sanya.intent import is_bot_name_call, strip_leading_bot_call
 from sanya.repository import Repository
 from sanya.services.chat import process_chat_message
+from sanya.services.queue import EnqueueResult
 
 
 class ChatAddressingTests(unittest.IsolatedAsyncioTestCase):
@@ -17,7 +18,9 @@ class ChatAddressingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.db = SimpleNamespace(run=AsyncMock())
         self.requests = SimpleNamespace(
-            enqueue=AsyncMock(), last_proactive={}, proactive_history={}
+            enqueue=AsyncMock(return_value=EnqueueResult.ACCEPTED),
+            last_proactive={},
+            proactive_history={},
         )
         self.message = SimpleNamespace(
             from_user=SimpleNamespace(

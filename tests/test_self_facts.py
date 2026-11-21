@@ -11,6 +11,7 @@ from sanya.handlers.chat import handle_message
 from sanya.observations import extract_self_facts, message_self_facts
 from sanya.repository import Repository
 from sanya.services.dialogue_notes import _collect
+from sanya.services.queue import EnqueueResult
 
 
 class SelfFactParserTests(unittest.TestCase):
@@ -102,7 +103,7 @@ class SelfFactIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     return_value=SimpleNamespace(id=99, username="test_bot")
                 )
             )
-            requests = SimpleNamespace(enqueue=AsyncMock())
+            requests = SimpleNamespace(enqueue=AsyncMock(return_value=EnqueueResult.ACCEPTED))
             with patch("sanya.handlers.chat.try_react_whale", AsyncMock()) as react:
                 await handle_message(message, bot, db, requests)
                 message.text, message.message_id = "Ненавижу пиццу с ананасами", 2

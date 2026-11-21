@@ -3,6 +3,7 @@ import logging
 import random
 import re
 from collections import OrderedDict
+from hashlib import blake2b
 from html import unescape
 from pathlib import Path
 from time import monotonic
@@ -21,6 +22,7 @@ from ..config import (
 )
 from ..database import Database
 from ..repository import Repository
+from .access import check_is_admin
 
 HORSE = re.compile(r"\b(?:хорс[а-яё]*|horse[a-z]*)\b", re.IGNORECASE)
 logger = logging.getLogger(__name__)
@@ -115,20 +117,27 @@ async def public_memes(channel: str = "mestodm") -> list[tuple[str, str]]:
         return []
 
 
+def _preview_channel_id(channel: str) -> int:
+    # Reserve positive 63-bit keys with bit 62 set, away from Telegram channel
+    # IDs and the old negative hash-based keys. SQLite stores signed integers.
+    digest = blake2b(channel.lower().encode("ascii"), digest_size=8).digest()
+    return (1 << 62) | (int.from_bytes(digest, "big") & ((1 << 62) - 1))
+
+
 async def precache_channel_memes(
     bot: Bot,
     db: Database,
     channel: str = "mestodm",
     max_pages: int = 10,
 ) -> dict[str, int]:
-    clean_channel = channel.strip().lstrip("@").split("/")[-1]
-    channel_id = -1003333441777 if clean_channel.lower() == "mestodm" else None
+    clean_channel = channel.strip().lstrip("@").split("/")[-1].lower()
+    channel_id = -1003333441777 if clean_channel == "mestodm" else None
     if channel_id is None:
         try:
             chat = await bot.get_chat(f"@{clean_channel}")
             channel_id = chat.id
         except Exception:
-            channel_id = -abs(hash(clean_channel))
+            channel_id = _preview_channel_id(clean_channel)
 
     proxy = TELEGRAM_PROXY or SEARCH_PROXY or None
     url = f"https://t.me/s/{clean_channel}"
@@ -177,7 +186,73 @@ async def precache_channel_memes(
     return {"new": new_saved, "found": total_found, "total": total_pool}
 
 
-async def cmd_precache(message: types.Message, bot: Bot, db: Database):
+class MemePrecache:
+    """Run at most one background import for the shared meme pool."""
+
+    def __init__(self):
+        self._task: asyncio.Task[None] | None = None
+
+    def start(
+        self, message: types.Message, bot: Bot, db: Database, channel: str, pages: int
+    ) -> bool:
+        if self._task is not None and not self._task.done():
+            return False
+        self._task = asyncio.create_task(
+            self._run(message, bot, db, channel, pages), name="meme-precache"
+        )
+        return True
+
+    async def close(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+
+    async def _run(
+        self, message: types.Message, bot: Bot, db: Database, channel: str, pages: int
+    ) -> None:
+        try:
+            status = await message.reply(
+                f"⏳ Шуршу по каналу @{channel}, тяну мемы в базу ({pages} стр.)..."
+            )
+            try:
+                stats = await asyncio.wait_for(
+                    precache_channel_memes(bot, db, channel=channel, max_pages=pages),
+                    timeout=180,
+                )
+            except asyncio.TimeoutError:
+                text = "Прекэш остановлен по таймауту. Уже добавленные мемы остались в пуле."
+            except Exception as exc:
+                logger.warning("Ошибка прекэша мемов: %s", type(exc).__name__)
+                text = (
+                    "Не удалось завершить прекэш. Уже добавленные мемы остались в пуле."
+                )
+            else:
+                text = (
+                    f"Просмотрел {stats['found']} постов с медиа из @{channel}; "
+                    f"новых добавил: {stats['new']}\n"
+                    f"Всего в пуле: {stats['total']} мемов. Уже сохранённые посты повторно не добавляю."
+                )
+            await status.edit_text(text)
+        except Exception as exc:
+            logger.warning(
+                "Не удалось отправить статус прекэша: %s", type(exc).__name__
+            )
+
+
+async def cmd_precache(
+    message: types.Message, bot: Bot, db: Database, meme_precache: MemePrecache
+):
+    author = message.from_user
+    if (
+        author is None
+        or author.is_bot
+        or message.sender_chat
+        or not await check_is_admin(None, author.id)
+    ):
+        await message.reply(
+            "Пополнять общий пул мемов могут только администраторы бота."
+        )
+        return
     args = (message.text or "").split()[1:]
     channel = "mestodm"
     pages = 10
@@ -190,21 +265,11 @@ async def cmd_precache(message: types.Message, bot: Bot, db: Database):
                 pages = int(args[1])
     pages = max(1, min(30, pages))
     clean_channel = channel.strip().lstrip("@").split("/")[-1]
-    status_msg = await message.reply(
-        f"⏳ Шуршу по каналу @{clean_channel}, тяну мемы в базу ({pages} стр.)..."
-    )
-    try:
-        stats = await precache_channel_memes(
-            bot, db, channel=clean_channel, max_pages=pages
-        )
-        await status_msg.edit_text(
-            f"Просмотрел {stats['found']} постов с медиа из @{clean_channel}; "
-            f"новых добавил: {stats['new']}\n"
-            f"Всего в пуле: {stats['total']} мемов. Уже сохранённые посты повторно не добавляю."
-        )
-    except Exception as e:
-        logger.exception("Ошибка прекэша мемов: %s", e)
-        await status_msg.edit_text(f"Чет не вышло затянуть мемы братан: {e}")
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,32}", clean_channel):
+        await message.reply("Укажи публичный канал, например /precache @mestodm 10.")
+        return
+    if not meme_precache.start(message, bot, db, clean_channel, pages):
+        await message.reply("Прекэш уже идёт. Дождись его завершения.")
 
 
 async def cmd_meme(message: types.Message, db: Database):

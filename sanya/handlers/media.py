@@ -18,8 +18,9 @@ from .command_args import command_args
 
 
 async def enqueue_command(message: types.Message, requests: RequestQueue, **kwargs):
-    if not await requests.enqueue(message, **kwargs):
-        await message.reply("Сейчас не могу принять запрос. Попробуй чуть позже.")
+    result = await requests.enqueue(message, **kwargs)
+    if error := result.rejection_message():
+        await message.reply(error)
 
 
 async def cmd_search(message: types.Message, requests: RequestQueue, db=None):

@@ -184,11 +184,13 @@ async def handle_message(
         return
 
     # Если обратились к боту или сработал проактивный ответ — ставим в очередь
-    await requests.enqueue(
+    result = await requests.enqueue(
         message,
         is_proactive=is_proactive,
         **({"custom_trigger": True} if is_custom_trigger else {}),
     )
+    if not is_proactive and (error := result.rejection_message()):
+        await message.reply(error)
 
 
 def make_router() -> Router:

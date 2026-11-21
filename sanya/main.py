@@ -102,6 +102,7 @@ async def main():
         await register_commands(bot)
         llm = Ollama(client)
         requests = RequestQueue()
+        meme_precache = memes.MemePrecache()
         worker = asyncio.create_task(
             requests.work(partial(process_chat_message, bot=bot, db=db, llm=llm))
         )
@@ -114,11 +115,14 @@ async def main():
                 db=db,
                 llm=llm,
                 requests=requests,
+                meme_precache=meme_precache,
             )
         finally:
             worker.cancel()
             sync.cancel()
-            await asyncio.gather(worker, sync, return_exceptions=True)
+            await asyncio.gather(
+                worker, sync, meme_precache.close(), return_exceptions=True
+            )
 
 
 async def register_commands(bot: Bot):

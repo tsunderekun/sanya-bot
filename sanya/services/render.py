@@ -47,6 +47,152 @@ _CHAT_SLASH = re.compile(
     r"|(?<=[А-Яа-яЁё.!?])[ \t]+/[ \t]+(?=[А-ЯЁ][а-яё]*\b)"
     r"|(?<=[а-яё])/(?=(?:А|Но|Если|Когда|Зато|Поэтому)[ \t]+)"
 )
+_CELL_SEPARATOR = re.compile(r"\\(.)|(\|)")
+_ALIGNMENT = re.compile(r":?-{3,}:?")
+_TABLE_INLINE = re.compile(
+    r"\\(?P<literal>[`*\\])|`(?P<code>[^`\n]+)`"
+    r"|(?<!\*)\*\*(?!\s)(?P<bold>[^*\n]+?)(?<!\s)\*\*(?!\*)"
+    r"|(?<!\*)\*(?!\s)(?P<italic>[^*\n]+?)(?<!\s)\*(?!\*)"
+)
+_TABLE_DIVIDER = re.compile(r"(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,}")
+_TABLE_BULLET = re.compile(r"[ \t]*[*+-][ \t]+(.+)")
+
+
+def _table_inline(text: str, *, rich: bool = True) -> str:
+    escape = html.escape if rich else str
+    parts = []
+    start = 0
+    for match in _TABLE_INLINE.finditer(text):
+        parts.append(escape(text[start : match.start()]))
+        key = match.lastgroup
+        value = escape(match[key])
+        tag = {"code": "code", "bold": "b", "italic": "i"}.get(key)
+        parts.append(f"<{tag}>{value}</{tag}>" if rich and tag else value)
+        start = match.end()
+    parts.append(escape(text[start:]))
+    return "".join(parts)
+
+
+def _table_prose(text: str) -> tuple[str, str]:
+    rich, plain, paragraph, bullets = [], [], [], []
+
+    def flush():
+        if paragraph:
+            rich.append("<p>" + "<br>".join(map(_table_inline, paragraph)) + "</p>")
+            paragraph.clear()
+        if bullets:
+            items = "".join(f"<li>{_table_inline(item)}</li>" for item in bullets)
+            rich.append(f"<ul>{items}</ul>")
+            bullets.clear()
+
+    for line in text.strip().splitlines():
+        if _TABLE_DIVIDER.fullmatch(line.strip()):
+            flush()
+            rich.append("<hr/>")
+            plain.append("")
+        elif item := _TABLE_BULLET.fullmatch(line):
+            if paragraph:
+                flush()
+            bullets.append(item[1])
+            plain.append("• " + _table_inline(item[1], rich=False))
+        elif line.strip():
+            if bullets:
+                flush()
+            paragraph.append(line)
+            plain.append(_table_inline(line, rich=False))
+        else:
+            flush()
+            plain.append("")
+    flush()
+    return "".join(rich), "\n".join(plain).strip()
+
+
+def _table_cells(line: str) -> list[str]:
+    line = line.strip().removeprefix("|")
+    cells = []
+    start = 0
+    for match in _CELL_SEPARATOR.finditer(line):
+        if match[2]:
+            cells.append(line[start : match.start()].strip())
+            start = match.end()
+    if start < len(line) or not cells:
+        cells.append(line[start:].strip())
+    return [cell.replace(r"\|", "|") for cell in cells]
+
+
+def _table_parts(text: str):
+    """Yield prose, fenced code, and complete Markdown tables separately."""
+    for lang, body in _parts(text):
+        if lang is not None:
+            yield "code", (lang, body)
+            continue
+        lines = body.splitlines(keepends=True)
+        start = index = 0
+        while index + 2 < len(lines):
+            header = _table_cells(lines[index])
+            separator = _table_cells(lines[index + 1])
+            if not (
+                len(header) >= 2
+                and len(separator) == len(header)
+                and all(_ALIGNMENT.fullmatch(cell) for cell in separator)
+            ):
+                index += 1
+                continue
+            end = index + 2
+            rows = []
+            while end < len(lines) and "|" in lines[end]:
+                row = _table_cells(lines[end])
+                if len(row) != len(header):
+                    break
+                rows.append(row)
+                end += 1
+            if not rows:
+                index += 1
+                continue
+            yield "text", "".join(lines[start:index])
+            yield "table", (header, rows)
+            start = index = end
+        yield "text", "".join(lines[start:])
+
+
+def render_table_reply(text: str) -> tuple[str, str] | None:
+    """Return safe Rich HTML and a plain list fallback for a table reply."""
+    parts = list(_table_parts(text))
+    if not any(kind == "table" for kind, _ in parts):
+        return None
+    rich, fallback = [], []
+    for kind, body in parts:
+        if kind == "table":
+            header, rows = body
+            rich.append(
+                "<table><tr>"
+                + "".join(f"<th>{_table_inline(c)}</th>" for c in header)
+                + "</tr>"
+            )
+            for row in rows:
+                rich.append(
+                    "<tr>"
+                    + "".join(f"<td>{_table_inline(c)}</td>" for c in row)
+                    + "</tr>"
+                )
+                fields = "; ".join(
+                    f"{_table_inline(name, rich=False)}: {_table_inline(value, rich=False)}"
+                    for name, value in zip(header, row)
+                )
+                fallback.append(f"• {fields}")
+            rich.append("</table>")
+        elif kind == "code":
+            lang, code = body
+            rich.append(
+                f'<pre><code class="language-{lang}">{html.escape(code)}</code></pre>'
+            )
+            fallback.append(f"```{lang}\n{code}```")
+        else:
+            rendered, plain = _table_prose(body)
+            rich.append(rendered)
+            if plain:
+                fallback.append(plain)
+    return "".join(rich), "\n\n".join(fallback)
 
 
 def _parts(text: str):
@@ -129,7 +275,9 @@ def clean_response(
             # Keep the actual joke or explanation, not its formatting wrappers.
             body = re.sub(r"\[([^\[\]\n]+)\]\((https?://[^\s)]+)\)", r"\1 (\2)", body)
             body = body.translate(BRACKETS)
-        if mode is Mode.CHAT:
+        if mode is Mode.CHAT and not any(
+            kind == "table" for kind, _ in _table_parts(body)
+        ):
             # Older prompt examples used slashes between separate replies.
             body = _CHAT_SLASH.sub(lambda m: m["literal"] or "\n", body)
         body = body.translate(EXCLAMATION)
@@ -138,7 +286,9 @@ def clean_response(
     result = "".join(clean).strip()
     if mode is Mode.CODE and code_only and len(list(FENCE.finditer(result))) != 1:
         return "", None, False
-    if mode is Mode.CHAT:
+    if mode is Mode.CHAT and not any(
+        kind == "table" for kind, _ in _table_parts(result)
+    ):
         lines = [
             chunk
             for line in result.splitlines()

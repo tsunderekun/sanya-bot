@@ -15,6 +15,7 @@ from sanya.lore import INITIAL_KENTS_PROFILES
 from sanya.repository import Repository
 from sanya.schema import initialize
 from sanya.services.chat import process_chat_message
+from sanya.services.queue import EnqueueResult
 
 
 class CommandTests(unittest.IsolatedAsyncioTestCase):
@@ -118,13 +119,20 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_search_parses_newline_and_reports_queue_rejection(self):
         self.message.text = "/s@ponyeb228_bot\nцены на RTX 3070"
-        queue = SimpleNamespace(enqueue=AsyncMock(return_value=False))
-        with patch("sanya.handlers.media.try_react_whale", AsyncMock()):
-            await cmd_search(self.message, queue)
-        queue.enqueue.assert_awaited_once_with(
-            self.message, force_search_query="цены на RTX 3070"
-        )
-        self.message.reply.assert_awaited_once()
+        for result, expected in (
+            (EnqueueResult.FULL, "очередь заполнена"),
+            (EnqueueResult.COOLDOWN, "Слишком частые запросы"),
+        ):
+            with self.subTest(result=result):
+                self.message.reply.reset_mock()
+                queue = SimpleNamespace(enqueue=AsyncMock(return_value=result))
+                with patch("sanya.handlers.media.try_react_whale", AsyncMock()):
+                    await cmd_search(self.message, queue)
+                queue.enqueue.assert_awaited_once_with(
+                    self.message, force_search_query="цены на RTX 3070"
+                )
+                self.message.reply.assert_awaited_once()
+                self.assertIn(expected, self.message.reply.await_args.args[0])
 
     async def test_search_does_not_invent_results_if_backend_returns_nothing(self):
         self.message.text = "/s напиши скрипт"

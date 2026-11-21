@@ -9,6 +9,7 @@ from aiogram.methods import DeleteMessage
 from aiogram.types import Chat, Message, User
 
 from sanya.services import booru, booru_confirmation, chat
+from sanya.services.queue import EnqueueResult
 
 
 class BooruConfirmationTests(unittest.IsolatedAsyncioTestCase):
@@ -67,7 +68,7 @@ class BooruConfirmationTests(unittest.IsolatedAsyncioTestCase):
             sender_chat=None,
             reply=AsyncMock(return_value=prompt),
         )
-        requests = SimpleNamespace(enqueue=AsyncMock(return_value=True))
+        requests = SimpleNamespace(enqueue=AsyncMock(return_value=EnqueueResult.ACCEPTED))
         with (
             patch.object(booru_confirmation, "_pending", {}),
             patch.object(Message, "delete", new_callable=AsyncMock) as delete,
@@ -117,7 +118,7 @@ class BooruConfirmationTests(unittest.IsolatedAsyncioTestCase):
             sender_chat=None,
             reply=AsyncMock(return_value=prompt),
         )
-        requests = SimpleNamespace(enqueue=AsyncMock(return_value=True))
+        requests = SimpleNamespace(enqueue=AsyncMock(return_value=EnqueueResult.ACCEPTED))
         error = TelegramAPIError(
             DeleteMessage(chat_id=group.id, message_id=8), "Denied"
         )

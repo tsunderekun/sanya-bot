@@ -23,6 +23,7 @@ from sanya.handlers.reply_style import (
     update_settings,
 )
 from sanya.repository import Repository
+from sanya.services.queue import EnqueueResult
 from sanya.trigger_phrases import matches_trigger_phrase, normalize_phrase
 
 
@@ -167,7 +168,11 @@ class TriggerPhraseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_custom_trigger_enqueues_only_in_own_group(self):
         bot = NS(get_me=AsyncMock(return_value=NS(id=99, username="ponyeb228_bot")))
-        requests = NS(enqueue=AsyncMock(), last_proactive={}, proactive_history={})
+        requests = NS(
+            enqueue=AsyncMock(return_value=EnqueueResult.ACCEPTED),
+            last_proactive={},
+            proactive_history={},
+        )
         message = NS(
             from_user=NS(id=42, is_bot=False, username="reader", first_name="Reader"),
             chat=NS(id=-100, type=ChatType.SUPERGROUP, title=None),

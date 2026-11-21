@@ -99,7 +99,7 @@ async def confirm_prompt_idea(callback: types.CallbackQuery, requests: RequestQu
         return
     del _idea_pending[token]
     queued = await requests.enqueue(message, prompt_idea=True)
-    await callback.answer("Собираю идею." if queued else "Повтори команду чуть позже.")
+    await callback.answer(queued.rejection_message() or "Собираю идею.")
     try:
         await prompt.delete()
     except TelegramAPIError:
@@ -132,7 +132,7 @@ async def confirm_booru(callback: types.CallbackQuery, requests: RequestQueue):
         booru_confirmed=True,
         **({"slop": True} if item.slop else {}),
     )
-    await callback.answer("Ищу." if queued else "Повтори команду чуть позже.")
+    await callback.answer(queued.rejection_message() or "Ищу.")
     try:
         await prompt.delete()
     except TelegramAPIError:
