@@ -15,9 +15,9 @@ from ..intent import (
 )
 from ..observations import message_self_facts
 from ..repository import Repository
-from ..services.queue import RequestQueue
+from ..services.queue import EnqueueResult, RequestQueue
 from ..services.safe_mode import safe_mode
-from ..services.stickers import try_react_whale
+from ..services.stickers import addressed_reaction, try_react, try_react_whale
 from .lore_panel import is_lore_panel_reply, save_lore_panel_reply
 from .memes import maybe_send_horse
 from .reply_style import is_trigger_panel_reply, save_trigger_panel_reply
@@ -120,8 +120,12 @@ async def handle_message(
         and message.chat.type in (ChatType.GROUP, ChatType.SUPERGROUP)
     ):
         horse_sent = await maybe_send_horse(message, address_text)
+    reaction = None
     if not safe and not background_blocked and not self_facts and not horse_sent:
-        await try_react_whale(message)
+        if is_private or is_reply_to_bot or is_mentioned or is_called_by_name:
+            reaction = addressed_reaction(address_text)
+        if reaction is None:
+            await try_react_whale(message)
 
     # Проверка на проактивный ответ Сани на любимые темы (max 3 в час на чат)
     is_proactive = False
@@ -191,6 +195,8 @@ async def handle_message(
     )
     if not is_proactive and (error := result.rejection_message()):
         await message.reply(error)
+    if reaction and result is EnqueueResult.ACCEPTED:
+        await try_react(message, reaction)
 
 
 def make_router() -> Router:
