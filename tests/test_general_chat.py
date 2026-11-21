@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from sanya.conversation_cues import starts_new_topic
 from sanya.database import Database
 from sanya.intent import Mode, classify_intent, is_targeted_insult
 from sanya.prompts import TOPIC_GUIDANCE, build_system_prompt
@@ -17,6 +18,19 @@ from sanya.services.sale_reply import grounded_sale_reply
 
 
 class GeneralChatTests(unittest.TestCase):
+    def test_topic_boundary_cues_do_not_include_short_followups(self):
+        for text, expected in (
+            ("Другой вопрос: как сварить рис?", True),
+            ("Что сказал один лифт другому? — Поднимайся", True),
+            ("После вечеринки мы задержались ещё на час, если понимаешь, о чём я", True),
+            ("А если крышки нет?", False),
+            ("А потом задержались ещё на час, если понимаешь, о чём я", False),
+            ("После этого мы задержались ещё на час, если понимаешь, о чём я", False),
+            ("Ну ты понял, о чём я", False),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(starts_new_topic(text), expected)
+
     def test_games_and_banter_do_not_turn_into_hostility(self):
         for text in (
             "Спермер, как катка?",
@@ -73,6 +87,46 @@ class GeneralChatTests(unittest.TestCase):
 
 
 class ChatContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_topic_boundary_excludes_old_turns_but_keeps_new_followup(self):
+        joke = "Что сказал один лифт другому? — Поднимайся"
+        with tempfile.TemporaryDirectory() as root:
+            async with Database(Path(root) / "topic.db") as db:
+                await db.run(
+                    Repository.save_message, 1, 1, None, 42, "kent", "user",
+                    "Как приготовить глазурь?",
+                )
+                bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(
+                    id=9, username="ponyeb228_bot",
+                )))
+                llm = SimpleNamespace(generate=AsyncMock(side_effect=[
+                    "Вот это шутка с подъёмом", "Скажет: ну вот и приехали",
+                ]))
+                message = SimpleNamespace(
+                    chat=SimpleNamespace(id=1, type="private"), message_id=2,
+                    from_user=SimpleNamespace(id=42, username="kent"),
+                    text=joke, caption=None, photo=None, sticker=None, reply_to_message=None,
+                )
+                with (
+                    patch("sanya.services.chat.send_burst_messages", AsyncMock(side_effect=[[3], [5]])),
+                    patch("sanya.services.chat.keep_typing", AsyncMock()),
+                ):
+                    await process_chat_message(message, bot, db=db, llm=llm)
+                    message.message_id = 4
+                    message.text = "А если он застрянет?"
+                    await process_chat_message(message, bot, db=db, llm=llm)
+                stored = await db.run(Repository.get_dialogue_rows, 1, 42, 6)
+                self.assertEqual(stored[0]["content"], "Как приготовить глазурь?")
+                first_call, second_call = llm.generate.await_args_list
+                first, second = first_call.args[0], second_call.args[0]
+                self.assertEqual(len(first), 1)
+                self.assertIn(joke, first[0]["content"])
+                self.assertIn("подхвати панчлайн", first_call.kwargs["system_prompt"])
+                self.assertNotIn("подхвати панчлайн", second_call.kwargs["system_prompt"])
+                self.assertEqual(second[0]["content"], joke)
+                self.assertEqual(second[1]["content"], "Вот это шутка с подъёмом")
+                self.assertIn("А если он застрянет?", second[-1]["content"])
+                self.assertNotIn("глазурь", str(second))
+
     async def test_topic_deflection_retries_once_without_old_history(self):
         with tempfile.TemporaryDirectory() as root:
             async with Database(Path(root) / "topic.db") as db:

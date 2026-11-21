@@ -8,6 +8,7 @@ from aiogram import Bot, types
 from aiogram.types import ReactionTypeEmoji
 
 from ..config import WHALE_REACTION_CHANCE
+from ..conversation_cues import DEADPAN_PUNCHLINE, DOUBLE_ENTENDRE
 from ..database import Database
 from ..lore import DEFAULT_STICKER_PACKS, ORIGINAL_SANYA_TOP_STICKERS
 from ..repository import Repository
@@ -15,25 +16,14 @@ from ..repository import Repository
 WHALE_TRIGGER_PATTERN = re.compile(
     r"\b(кит|кита|киту|китом|ките|киты|китов|китам|китами|китах)\b|🐳", re.IGNORECASE
 )
-_DEADPAN_PUNCHLINE = re.compile(
-    r"\b(?:тупая\s+шутка\s+дня|плохой\s+каламбур\s+дня)\s*:\s*\w"
-    r"|\bчто\s+сказал\s+один\s+[^?!.\n]{1,60}\s+другому\s*\?\s*[—–-]\s*\w",
-    re.I,
-)
-_DOUBLE_ENTENDRE = re.compile(
-    r"\b(?:если\s+(?:ты\s+)?понимаешь|ну\s+ты\s+понял[аи]?)\s*,\s*"
-    r"(?:о\s+ч[её]м|на\s+что\s+намекаю)\b"
-    r"|\bне\s+спрашивай\s*,\s*что\s+было\s+дальше\s*[;:]-?\)",
-    re.I,
-)
 
 
 def addressed_reaction(text: str) -> str | None:
     if text.lstrip().startswith("/") or WHALE_TRIGGER_PATTERN.search(text):
         return None
-    if _DOUBLE_ENTENDRE.search(text):
+    if DOUBLE_ENTENDRE.search(text):
         return "🌚"
-    if _DEADPAN_PUNCHLINE.search(text):
+    if DEADPAN_PUNCHLINE.search(text):
         return "🗿"
     return None
 
