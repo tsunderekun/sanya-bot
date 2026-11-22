@@ -9,7 +9,12 @@ from unittest.mock import AsyncMock, patch
 from sanya.conversation_cues import starts_new_topic
 from sanya.database import Database
 from sanya.intent import Mode, classify_intent, is_targeted_insult
-from sanya.prompts import TOPIC_GUIDANCE, build_system_prompt
+from sanya.prompts import (
+    CHAT_SOCIAL,
+    CHAT_TOPIC_GUIDANCE,
+    TOPIC_GUIDANCE,
+    build_system_prompt,
+)
 from sanya.repository import Repository
 from sanya.schema import initialize
 from sanya.services.chat import process_chat_message
@@ -46,16 +51,33 @@ class GeneralChatTests(unittest.TestCase):
 
     def test_general_chat_prompt_encourages_on_topic_banter(self):
         prompt = build_system_prompt(Mode.CHAT, "Спермер, как катка?")
-        self.assertIn("не своди разговор к железу", prompt)
+        self.assertIn("Не своди разговор к железу", prompt)
         self.assertIn("Дружеский стёб подхвати", prompt)
+        self.assertIn("панч по ситуации, не по человеку", prompt)
         self.assertIn("не склеивай мат и мемы", prompt)
+        self.assertIn("Репетирует взлёт", prompt)
 
     def test_topic_and_uncertainty_guidance_is_limited_to_conversation(self):
         for mode in Mode:
             with self.subTest(mode=mode):
                 prompt = build_system_prompt(mode, "А если вечером похолодает?")
-                self.assertEqual(TOPIC_GUIDANCE in prompt, mode in (Mode.CHAT, Mode.DETAIL))
-        self.assertNotIn(TOPIC_GUIDANCE, build_system_prompt(Mode.CHAT, safe_voice="Без мата."))
+                expected = (
+                    (CHAT_TOPIC_GUIDANCE,)
+                    if mode is Mode.CHAT
+                    else (TOPIC_GUIDANCE,)
+                    if mode is Mode.DETAIL
+                    else ()
+                )
+                for guidance in (CHAT_TOPIC_GUIDANCE, TOPIC_GUIDANCE):
+                    self.assertEqual(guidance in prompt, guidance in expected)
+        self.assertNotIn(CHAT_TOPIC_GUIDANCE, build_system_prompt(Mode.CHAT, safe_voice="Без мата."))
+
+    def test_detail_keeps_installed_social_and_topic_contract(self):
+        detail = build_system_prompt(Mode.DETAIL, "А если вечером похолодает?")
+        self.assertIn(TOPIC_GUIDANCE, detail)
+        self.assertIn("По фото отделяй видимое от предположений", detail)
+        self.assertNotIn(CHAT_SOCIAL, detail)
+        self.assertNotIn(CHAT_TOPIC_GUIDANCE, detail)
 
     def test_dossier_count_excludes_other_chats_users_and_bot_replies(self):
         with closing(sqlite3.connect(":memory:")) as conn:
