@@ -12,8 +12,9 @@ from aiogram.methods import DeleteMessage
 from aiogram.types import Chat, Message, User
 
 from sanya.database import Database
+from sanya.handlers.draw_access import decide_group_draw
 from sanya.handlers.help_pages import PAGES, cmd_help, help_page, keyboard
-from sanya.handlers.reply_style import cmd_settings, update_settings
+from sanya.handlers.reply_style import cmd_settings, settings_view, update_settings
 from sanya.handlers.vocabulary import (
     ADD_PROMPT,
     _word_id,
@@ -47,6 +48,58 @@ class AutomaticStickerTests(unittest.TestCase):
 
 
 class SettingsButtonsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_voice_presets_preserve_group_permissions(self):
+        temp = self.enterContext(tempfile.TemporaryDirectory())
+        db = await self.enterAsyncContext(Database(Path(temp) / "settings.sqlite"))
+        chat = Chat(id=-100, type="supergroup")
+        query = SimpleNamespace(
+            message=Message(message_id=1, date=datetime.now(timezone.utc), chat=chat),
+            from_user=User(id=42, is_bot=False, first_name="Test"),
+            data="settings:voice:voice:25",
+            answer=AsyncMock(),
+        )
+        _, menu = await settings_view(db, chat.id, "all")
+        controls = {button.callback_data for row in menu.inline_keyboard for button in row}
+        self.assertTrue({"settings:view:voice", "settings:view:draw"} <= controls)
+        with (
+            patch("sanya.handlers.reply_style.PIPER_MODEL_PATH", "test.onnx"),
+            patch("sanya.handlers.reply_style.check_is_admin", AsyncMock(side_effect=[False, True])),
+            patch.object(Message, "edit_text", AsyncMock()) as edit,
+        ):
+            await update_settings(query, db)
+            self.assertEqual((await db.run(Repository.get_chat_reply_settings, chat.id)).voice_chance, 0)
+            edit.assert_not_awaited()
+            await update_settings(query, db)
+            self.assertEqual((await db.run(Repository.get_chat_reply_settings, chat.id)).voice_chance, 25)
+            self.assertIn("шанс 25%", edit.await_args.args[0])
+
+    async def test_draw_access_controls_only_in_owner_private_settings(self):
+        temp = self.enterContext(tempfile.TemporaryDirectory())
+        db = await self.enterAsyncContext(Database(Path(temp) / "settings.sqlite"))
+        token = "a" * 22
+        await db.run(Repository.request_draw_access, -100, 42, token)
+        for user_id in range(43, 48):
+            await db.run(Repository.request_draw_access, -100, user_id, f"{user_id:022d}")
+        with patch.dict("os.environ", {"IMAGE_GENERATION_APPROVER_ID": "99"}):
+            for chat_id in (-100, 42):
+                text, _ = await settings_view(db, chat_id, "draw")
+                self.assertNotIn("участник 42", text)
+            _, menu = await settings_view(db, 99, "draw")
+            message = Message(message_id=1, date=datetime.now(timezone.utc),
+                              chat=Chat(id=99, type="private"), reply_markup=menu)
+            query = SimpleNamespace(message=message, from_user=User(id=99, is_bot=False, first_name="Owner"),
+                                    data="settings:draw:page:1", answer=AsyncMock())
+            with patch.object(Message, "edit_text", AsyncMock()) as edit:
+                await update_settings(query, db)
+                self.assertIn("участник 47", edit.await_args.args[0])
+                query.data = f"draw-access:allow:{token}"
+                await decide_group_draw(query, db)
+                self.assertIn("Разрешён", edit.await_args.args[0])
+                query.data = f"draw-access:revoke:{token}"
+                await decide_group_draw(query, db)
+                self.assertNotIn("участник 42", edit.await_args.args[0])
+            self.assertEqual(await db.run(Repository.get_draw_access, -100, 42), "revoked")
+
     async def test_settings_opened_from_help_can_be_closed_by_opener_after_navigation(
         self,
     ):

@@ -2,12 +2,15 @@ from aiogram import types
 from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 
+from ..config import PIPER_MODEL_PATH
 from ..database import Database
 from ..reply_style import LORE_LABELS, STICKER_LABELS, TONE_LABELS
 from ..repository import Repository
+from ..services.image_generation import ADMIN_DAILY_LIMIT, DAILY_LIMIT, USER_DAILY_LIMIT
 from ..trigger_phrases import valid_trigger_phrase
 from .access import check_is_admin
 from .command_args import command_args
+from .draw_access import draw_settings_rows, owner_id
 
 MODE_LABELS = {"normal": "норм", "rofl": "рофл", "safe": "сейф"}
 MODE_ARGS = {label: mode for mode, label in MODE_LABELS.items()} | {
@@ -16,7 +19,8 @@ MODE_ARGS = {label: mode for mode, label in MODE_LABELS.items()} | {
 SETTINGS_PREFIX = "settings:"
 OWNED_CLOSE_PREFIX = SETTINGS_PREFIX + "close:"
 LEVELS = {"tone": ("/тон", TONE_LABELS), "lore": ("/лор", LORE_LABELS)}
-VIEWS = {"all", "mode", "sticker", "triggers", *LEVELS}
+VIEWS = {"all", "mode", "sticker", "triggers", "voice", "draw", *LEVELS}
+VOICE_PRESETS = (0, 10, 25, 50, 75, 100)
 TRIGGER_HEADING = "Фразы обращения к боту"
 
 
@@ -51,7 +55,7 @@ def _with_panel_owner(keyboard: types.InlineKeyboardMarkup, owner: int):
     return keyboard
 
 
-async def settings_view(db: Database, chat_id: int, view: str):
+async def settings_view(db: Database, chat_id: int, view: str, *, page: int = 0):
     settings = await db.run(Repository.get_chat_reply_settings, chat_id)
     level = settings.sticker_level
     sticker = STICKER_LABELS[level] if level is not None else "по умолчанию"
@@ -61,7 +65,8 @@ async def settings_view(db: Database, chat_id: int, view: str):
             f"Режим: {MODE_LABELS[settings.mode]}\n"
             f"Тон: {settings.style.tone} — {TONE_LABELS[settings.style.tone]}\n"
             f"Лор: {settings.style.lore} — {LORE_LABELS[settings.style.lore]}\n"
-            f"Автостикеры: {sticker}"
+            f"Автостикеры: {sticker}\n"
+            f"Голосовые: {f'{settings.voice_chance}%' if settings.voice_chance else 'выключены'}"
         )
         return text, panel_keyboard(
             [
@@ -71,6 +76,7 @@ async def settings_view(db: Database, chat_id: int, view: str):
                     button("Лор", "view:lore"),
                 ],
                 [button("Автостикеры", "view:sticker"), button("Словарь", "dict")],
+                [button("Голосовые", "view:voice"), button("Генерация картинок", "view:draw")],
                 *(
                     [[button("Фразы обращения", "view:triggers")]]
                     if chat_id < 0
@@ -83,7 +89,7 @@ async def settings_view(db: Database, chat_id: int, view: str):
     if view == "mode":
         text.append(f"Режим этого чата: {MODE_LABELS[settings.mode]}")
         text.append(
-            "Сейф: без мата, подколов и фоновых реплик; поиск картинок отключён."
+            "Сейф: без мата, подколов и фоновых реплик; поиск и генерация картинок отключены."
         )
         rows.append(
             [
@@ -112,6 +118,39 @@ async def settings_view(db: Database, chat_id: int, view: str):
             ]
         )
         rows.append([button("По умолчанию", f"{view}:sticker:default")])
+    if view == "voice":
+        chance = settings.voice_chance
+        text.append(f"Голосовые: {'шанс ' + str(chance) + '%' if chance else 'выключены'}")
+        text.append("Выбери шанс для этого чата. Любое значение от 0 до 100: /голосовые 35.")
+        if not PIPER_MODEL_PATH:
+            text.append("Синтез на сервере не настроен.")
+        choices = [
+            button(("✓ " if value == chance else "") + (f"{value}%" if value else "Выкл"), f"voice:voice:{value}")
+            for value in VOICE_PRESETS if PIPER_MODEL_PATH or value == 0
+        ]
+        rows.extend(row for row in (choices[:3], choices[3:]) if row)
+    if view == "draw":
+        text.extend((
+            "Генерация картинок",
+            "Пример: /нарисуй трамвай под зелёным зонтом",
+            f"В сутки: {USER_DAILY_LIMIT} попытки на пользователя, {ADMIN_DAILY_LIMIT} — на админа бота, "
+            f"{DAILY_LIMIT} — на всех. Лимиты общие для лички и групп. Сброс в 00:00 UTC.",
+        ))
+        if settings.mode == "safe":
+            text.append("В сейф-режиме генерация выключена.")
+        if chat_id < 0:
+            text.append("В группе для генерации нужно разрешение владельца бота.")
+        if chat_id == owner_id():
+            lines, controls, more = await draw_settings_rows(db, page)
+            text.extend(["", "Заявки и доступы", *lines] if lines else ["", "На этой странице нет заявок или выданных доступов."])
+            rows.extend(controls)
+            navigation = []
+            if page:
+                navigation.append(button("← Назад", f"draw:page:{page - 1}"))
+            if more:
+                navigation.append(button("Далее →", f"draw:page:{page + 1}"))
+            if navigation:
+                rows.append(navigation)
     if view == "triggers":
         phrases = await db.run(Repository.get_chat_trigger_phrases, chat_id)
         text.append(
@@ -194,6 +233,18 @@ async def update_settings(query: types.CallbackQuery, db: Database):
         await show_settings(msg, db, owner=query.from_user.id)
         return
     navigation = data.removeprefix("view:")
+    if data.startswith("draw:page:"):
+        page = data.removeprefix("draw:page:")
+        if (msg.chat.type != ChatType.PRIVATE or msg.chat.id != owner_id()
+                or query.from_user.id != msg.chat.id):
+            await query.answer("Управлять доступом может только владелец.", show_alert=True)
+            return
+        if not (page.isascii() and page.isdecimal() and len(page) <= 6):
+            await query.answer("Кнопка устарела")
+            return
+        await query.answer()
+        await edit_panel(msg, *await settings_view(db, msg.chat.id, "draw", page=int(page)))
+        return
     if data.startswith("view:") and navigation in VIEWS:
         if navigation == "triggers" and msg.chat.type not in (
             ChatType.GROUP,
@@ -242,6 +293,7 @@ async def update_settings(query: types.CallbackQuery, db: Database):
         (axis == "mode" and value in MODE_LABELS)
         or (axis in LEVELS and value in ("0", "1", "2", "3"))
         or (axis == "sticker" and value in ("0", "1", "2", "3", "default"))
+        or (axis == "voice" and value in {str(preset) for preset in VOICE_PRESETS})
     ) or view not in ("all", axis):
         await query.answer("Кнопка устарела")
         return
@@ -258,6 +310,11 @@ async def update_settings(query: types.CallbackQuery, db: Database):
             msg.chat.id,
             None if value == "default" else int(value),
         )
+    elif axis == "voice":
+        if value != "0" and not PIPER_MODEL_PATH:
+            await query.answer("Синтез на сервере не настроен.", show_alert=True)
+            return
+        await db.run(Repository.set_chat_voice_chance, msg.chat.id, int(value))
     else:
         await db.run(Repository.set_chat_reply_level, msg.chat.id, axis, int(value))
     await query.answer("Сохранено")

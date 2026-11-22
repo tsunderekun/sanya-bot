@@ -17,6 +17,8 @@ from ..services.queue import RequestQueue
 from ..services.safe_mode import IDEA_DISABLED, safe_mode
 from ..services.stickers import try_react_whale
 from .command_args import command_args
+from .draw_access import GROUPS, authorize_group_draw, cmd_drawrevoke, decide_group_draw
+from .draw_access import PREFIX as DRAW_ACCESS_PREFIX
 
 
 async def enqueue_command(message: types.Message, requests: RequestQueue, **kwargs):
@@ -50,8 +52,11 @@ async def cmd_pic(message: types.Message, requests: RequestQueue, db=None):
         await enqueue_command(message, requests, force_image_query=args)
 
 
-async def cmd_draw(message: types.Message, image_generation: ImageGeneration | None = None):
-    if message.chat.type != ChatType.PRIVATE or message.from_user is None:
+async def cmd_draw(message: types.Message, image_generation: ImageGeneration | None = None, db=None):
+    if message.chat.type not in (ChatType.PRIVATE, *GROUPS) or message.from_user is None:
+        return
+    in_group = message.chat.type in GROUPS
+    if in_group and (db is None or message.sender_chat or message.from_user.is_bot):
         return
     if image_generation is None:
         await message.reply("Генерация картинок пока выключена.")
@@ -63,6 +68,8 @@ async def cmd_draw(message: types.Message, image_generation: ImageGeneration | N
         await message.reply("Опиши сцену после команды: /нарисуй трамвай под зелёным зонтом.")
     elif len(prompt) > MAX_PROMPT:
         await message.reply(f"Сократи описание до {MAX_PROMPT} символов.")
+    elif in_group and not await authorize_group_draw(message, db):
+        return
     elif not image_generation.start(message, prompt):
         await message.reply("Уже рисую другую картинку. Попробуй чуть позже.")
 
@@ -118,10 +125,12 @@ def make_router() -> Router:
     router = Router(name=__name__)
     router.callback_query.register(confirm_booru, F.data.startswith(PREFIX))
     router.callback_query.register(confirm_prompt_idea, F.data.startswith(IDEA_PREFIX))
+    router.callback_query.register(decide_group_draw, F.data.startswith(DRAW_ACCESS_PREFIX))
     router.message.register(cmd_slop, Command("slop", "слоп"))
     router.message.register(cmd_code, Command("code", "код"))
     router.message.register(cmd_prompt, Command("prompt", "промпт"))
-    router.message.register(cmd_draw, Command("draw", "нарисуй"), F.chat.type == ChatType.PRIVATE)
+    router.message.register(cmd_draw, Command("draw", "нарисуй"), F.chat.type.in_((ChatType.PRIVATE, *GROUPS)))
+    router.message.register(cmd_drawrevoke, Command("drawrevoke"), F.chat.type == ChatType.PRIVATE)
     router.message.register(cmd_prompt_idea, Command("promptidea", "идея"))
     router.message.register(
         cmd_search,

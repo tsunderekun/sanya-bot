@@ -33,6 +33,56 @@ class Repository:
     def __init__(self, connection: sqlite3.Connection):
         self.connection = connection
 
+    def get_draw_access(self, chat_id: int, user_id: int) -> str | None:
+        row = self.connection.execute(
+            "SELECT state FROM image_generation_access WHERE chat_id=? AND user_id=?",
+            (chat_id, user_id),
+        ).fetchone()
+        return row[0] if row else None
+
+    def list_active_draw_access(self, offset: int, limit: int):
+        return self.connection.execute(
+            "SELECT chat_id, user_id, token, state FROM image_generation_access "
+            "WHERE state IN ('pending', 'allowed') "
+            "ORDER BY state, chat_id, user_id LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+
+    def request_draw_access(self, chat_id: int, user_id: int, token: str) -> bool:
+        with self.connection as conn:
+            return conn.execute(
+                "INSERT INTO image_generation_access VALUES (?, ?, ?, 'pending') "
+                "ON CONFLICT(chat_id, user_id) DO NOTHING",
+                (chat_id, user_id, token),
+            ).rowcount == 1
+
+    def discard_draw_request(self, token: str) -> None:
+        with self.connection as conn:
+            conn.execute(
+                "DELETE FROM image_generation_access WHERE token=? AND state='pending'", (token,)
+            )
+
+    def decide_draw_access(self, token: str, action: str):
+        before, after = {
+            "allow": ("pending", "allowed"),
+            "deny": ("pending", "denied"),
+            "revoke": ("allowed", "revoked"),
+        }[action]
+        with self.connection as conn:
+            return conn.execute(
+                "UPDATE image_generation_access SET state=? WHERE token=? AND state=? "
+                "RETURNING chat_id, user_id",
+                (after, token, before),
+            ).fetchone()
+
+    def revoke_draw_access(self, chat_id: int, user_id: int) -> bool:
+        with self.connection as conn:
+            return conn.execute(
+                "UPDATE image_generation_access SET state='revoked' "
+                "WHERE chat_id=? AND user_id=? AND state IN ('pending', 'allowed')",
+                (chat_id, user_id),
+            ).rowcount == 1
+
     def reserve_image_generation(
         self, day_utc: str, limit: int, user_id: int, user_limit: int | None
     ) -> ImageQuota:

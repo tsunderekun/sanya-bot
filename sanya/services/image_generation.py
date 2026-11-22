@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import httpx
 from aiogram import types
+from aiogram.enums import ChatType
 
 from ..config import ADMIN_IDS
 from ..database import Database
@@ -96,10 +97,19 @@ class ImageGeneration:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
 
+    async def _has_access(self, message: types.Message) -> bool:
+        if message.chat.type == ChatType.PRIVATE:
+            return True
+        return await self._db.run(
+            Repository.get_draw_access, message.chat.id, message.from_user.id
+        ) == "allowed"
+
     async def _run(self, message: types.Message, prompt: str) -> None:
         try:
             if await safe_mode(self._db, message.chat.id):
                 await message.reply("В сейф-режиме генерация картинок выключена.")
+                return
+            if not await self._has_access(message):
                 return
             day = datetime.now(timezone.utc).date().isoformat()
             user_id = message.from_user.id
@@ -118,7 +128,7 @@ class ImageGeneration:
                 return
             await message.reply("Рисую. Это может занять до 45 секунд.")
             formatted = await self._llm.rewrite_image_prompt(prompt) or prompt
-            if await safe_mode(self._db, message.chat.id):
+            if await safe_mode(self._db, message.chat.id) or not await self._has_access(message):
                 return
             try:
                 image = await self._provider.generate(formatted)
@@ -132,7 +142,7 @@ class ImageGeneration:
                 else:
                     await message.reply("Не получилось сгенерировать картинку. Попробуй позже.")
                 return
-            if not await safe_mode(self._db, message.chat.id):
+            if not await safe_mode(self._db, message.chat.id) and await self._has_access(message):
                 await message.reply_photo(types.BufferedInputFile(image, filename="sanya-flux.jpg"))
         except Exception as exc:
             # Do not emit exception text: it can contain an API request or chat data.
