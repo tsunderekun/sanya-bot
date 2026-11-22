@@ -19,6 +19,7 @@ from sanya.repository import Repository
 from sanya.schema import initialize
 from sanya.services.chat import process_chat_message
 from sanya.services.dialogue_notes import _collect
+from sanya.services.render import CHAT_FAILURE_REPLIES
 from sanya.services.sale_reply import grounded_sale_reply
 
 
@@ -35,6 +36,18 @@ class GeneralChatTests(unittest.TestCase):
         ):
             with self.subTest(text=text):
                 self.assertEqual(starts_new_topic(text), expected)
+
+    def test_failure_replies_are_short_self_ironic_bursts(self):
+        self.assertGreaterEqual(len(CHAT_FAILURE_REPLIES), 6)
+        self.assertEqual(len(set(CHAT_FAILURE_REPLIES)), len(CHAT_FAILURE_REPLIES))
+        for reply in CHAT_FAILURE_REPLIES:
+            lines = reply.splitlines()
+            with self.subTest(reply=reply):
+                self.assertTrue(1 <= len(lines) <= 3)
+                self.assertTrue(all(line.strip() for line in lines))
+                self.assertTrue(all(len(line) <= 40 for line in lines))
+                self.assertNotIn("ты ", reply.casefold())
+                self.assertNotIn("твой", reply.casefold())
 
     def test_games_and_banter_do_not_turn_into_hostility(self):
         for text in (
@@ -281,7 +294,7 @@ class ChatContextTests(unittest.IsolatedAsyncioTestCase):
                         on_topic,
                         on_topic,
                     ),
-                    ("Я про железо спросил", off_topic, "Чёт ответ не собрался"),
+                    ("Я про железо спросил", off_topic, None),
                 ):
                     with self.subTest(retry=retry):
                         llm = SimpleNamespace(generate=AsyncMock(side_effect=[first_reply, retry]))
@@ -294,7 +307,10 @@ class ChatContextTests(unittest.IsolatedAsyncioTestCase):
                         first, second = llm.generate.await_args_list
                         self.assertIn("RTX 3070", first.args[0][0]["content"])
                         self.assertEqual(second.args[0], first.args[0][-1:])
-                        self.assertEqual(send.await_args.args[3], expected)
+                        if expected is None:
+                            self.assertIn(send.await_args.args[3], CHAT_FAILURE_REPLIES)
+                        else:
+                            self.assertEqual(send.await_args.args[3], expected)
                         search.assert_not_awaited()
                         message.message_id += 1
 

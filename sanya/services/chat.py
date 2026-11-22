@@ -60,6 +60,7 @@ from .media import (
 from .meme_lore import asks_about_lore, meme_lore_reply
 from .ocr import recognize_image_text
 from .render import (
+    CHAT_FAILURE_REPLIES,
     CHAT_FALLBACK,
     SELF_HUMILIATION_CHECK,
     Mode,
@@ -1245,10 +1246,11 @@ async def process_chat_message(
             logging.warning("Reply render fallback mode=%s rofl=%s", mode.name, rofl)
             sticker = False
             suppress_auto_sticker = True
+            failure = CHAT_FALLBACK if safe else random.choice(CHAT_FAILURE_REPLIES)
             result = {
                 Mode.CODE: "Скрипт целиком не собрался\nДавай разобьём задачу на части",
                 Mode.PROMPT: "Не получилось собрать обе части промпта на английском. Попробуй ещё раз.",
-            }.get(mode, CHAT_FALLBACK)
+            }.get(mode, failure)
             if force_gpu_query:
                 result = "Не получилось собрать короткую оценку видеокарты. Попробуй ещё раз."
         if safe and (suppress_auto_sticker or not safe_reply(result)):
