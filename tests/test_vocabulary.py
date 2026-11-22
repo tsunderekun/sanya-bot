@@ -53,6 +53,73 @@ class VocabularyTests(unittest.IsolatedAsyncioTestCase):
                 await cmd_vocabulary(message, db)
             self.assertEqual(await db.run(Repository.list_chat_words, -100), [])
 
+    def test_builtin_definition_matches_explicit_questions_only(self):
+        from sanya.vocabulary import builtin_definition
+
+        self.assertEqual(builtin_definition("что за жодик?"), ("жодик", "HDD"))
+        self.assertEqual(builtin_definition("что значит гальку?")[0], "галька")
+        self.assertEqual(builtin_definition("что за антона?")[0], "антон")
+        self.assertIsNone(builtin_definition("что за принтер?"))
+        self.assertIsNone(builtin_definition("как настроить dns?"))
+        self.assertEqual(builtin_definition("что за слойпер?")[0], "слойпер")
+
+    async def test_builtin_definition_is_paraphrased_in_voice(self):
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "words.db"
+        async with Database(path) as db:
+            message = NS(
+                text="Спермер, что за жодик?",
+                chat=NS(id=-100, type="supergroup"),
+                from_user=NS(id=42, username="reader"),
+                message_id=10,
+                reply_to_message=None,
+                photo=None,
+                sticker=None,
+                caption=None,
+            )
+            bot = NS(get_me=AsyncMock(return_value=NS(id=9, username="ponyeb228_bot")))
+            llm = NS(generate=AsyncMock(return_value="Жодик — это жёсткий диск, куда сваливаешь хлам"))
+            with (
+                patch(
+                    "sanya.services.chat.send_burst_messages",
+                    AsyncMock(return_value=[11]),
+                ) as send,
+                patch("sanya.services.chat.keep_typing", AsyncMock()),
+            ):
+                await process_chat_message(message, bot, db=db, llm=llm)
+        llm.generate.assert_awaited_once()
+        self.assertIn("жодик", llm.generate.await_args.args[0][0]["content"])
+        self.assertIn("HDD", llm.generate.await_args.args[0][0]["content"])
+        self.assertIn("не переспрашивай", llm.generate.await_args.kwargs["system_prompt"])
+        self.assertEqual(
+            send.await_args.args[3],
+            "Жодик — это жёсткий диск, куда сваливаешь хлам",
+        )
+
+    async def test_builtin_definition_falls_back_when_model_asks_back(self):
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "words.db"
+        async with Database(path) as db:
+            message = NS(
+                text="что за жодик?",
+                chat=NS(id=1, type="private"),
+                from_user=NS(id=42, username="reader"),
+                message_id=10,
+                reply_to_message=None,
+                photo=None,
+                sticker=None,
+                caption=None,
+            )
+            bot = NS(get_me=AsyncMock(return_value=NS(id=9, username="ponyeb228_bot")))
+            llm = NS(generate=AsyncMock(return_value="Какой именно жодик ты имеешь в виду?"))
+            with (
+                patch(
+                    "sanya.services.chat.send_burst_messages",
+                    AsyncMock(return_value=[11]),
+                ) as send,
+                patch("sanya.services.chat.keep_typing", AsyncMock()),
+            ):
+                await process_chat_message(message, bot, db=db, llm=llm)
+        self.assertEqual(send.await_args.args[3], "жодик — HDD")
+
     async def test_custom_definition_and_rofl_context(self):
         path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "words.db"
         async with Database(path) as db:

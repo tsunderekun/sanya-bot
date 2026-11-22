@@ -36,7 +36,7 @@ from ..memory import build_turn, compact_dialogue
 from ..prompts import CAPTION_PROMPT, build_system_prompt
 from ..reply_style import ChatReplySettings, ReplyStyle
 from ..repository import Repository
-from ..vocabulary import custom_definition, select_words
+from ..vocabulary import builtin_definition, custom_definition, select_words
 from .booru import (
     SINGLE_TAG_HINT,
     BooruUnavailable,
@@ -121,6 +121,15 @@ _GPU_REVIEW_PROMPT = (
     "**Работа:** подходящие задачи и ограничения. Цель — до 500 символов. "
     "Без вступления, повторного итога, цен и объявлений. Не выдумывай FPS, замеры или характеристики. "
     "Если модель неясна или это не видеокарта, задай один короткий уточняющий вопрос."
+)
+
+
+_DEFINITION_PROMPT = (
+    "Ты Саня, кореш в конфе. Объясни значение слова своими словами, "
+    "одной-двумя короткими репликами, как в живом разговоре. "
+    "Значение уже известно: не переспрашивай, не проси контекст и не начинай с вопроса. "
+    "Используй только переданное значение, не добавляй новых фактов. "
+    "Без эмодзи, служебных меток и скобок вокруг реплики."
 )
 
 
@@ -789,6 +798,26 @@ async def process_chat_message(
         rofl = False
         await send_answer(story, detailed=True)
         return
+
+    if lore_allowed and not safe:
+        builtin = builtin_definition(strip_leading_bot_call(query_text) or query_text)
+        if builtin:
+            word, meaning = builtin
+            try:
+                reply = await llm.generate(
+                    [{
+                        "role": "user",
+                        "content": f"Слово: {word}\nЗначение: {meaning}\nОбъясни своими словами.",
+                    }],
+                    system_prompt=_DEFINITION_PROMPT,
+                )
+            except Exception:
+                reply = ""
+            reply = reply.strip()
+            if not reply or reply.endswith("?"):
+                reply = f"{word} — {meaning}"
+            await send_answer(reply)
+            return
 
     if lore_allowed and not rofl and not safe:
         sale_answer = grounded_sale_reply(

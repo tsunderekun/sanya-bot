@@ -84,3 +84,24 @@ def custom_definition(rows, text: str) -> str:
     return next(
         (f"{row['word']} — {row['meaning']}" for row in rows if row["word"] == term), ""
     )
+
+
+_EXPLICIT_TERM = re.compile(
+    r"^\s*(?:что\s+(?:за|значит|означает|такое)|объясни|поясни)\s+(.+?)\s*[?!.]*$",
+    re.I,
+)
+
+
+def builtin_definition(text: str) -> tuple[str, str] | None:
+    """Resolve an explicit "что за X?" question against the built-in dictionary."""
+    match = _EXPLICIT_TERM.match(text)
+    if not match:
+        return None
+    term = word_key(match[1].strip(" \"'«»“”`"))
+    for candidate in (term, term[:-1], term[:-2]):
+        if len(candidate) < 4:
+            continue
+        found = [key for key in BUILTIN_INDEX if key.startswith(candidate)]
+        if len(found) == 1:
+            return found[0], BUILTIN_INDEX[found[0]]
+    return None
