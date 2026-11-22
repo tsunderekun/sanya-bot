@@ -149,6 +149,112 @@ class ChatContextTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("А если он застрянет?", second[-1]["content"])
                 self.assertNotIn("глазурь", str(second))
 
+    def test_live_printer_reply_is_flagged_and_trimmed(self):
+        from sanya.services.chat import drop_unrequested_advice, unrequested_advice
+
+        text = (
+            "Твои принтеры — это перфекционисты в области белых пятен\n"
+            "Проверь уровень чернил и запусти цикл очистки печатающей головки если у тебя струйник "
+            "иначе сбрось настройки драйвера полностью попробуй переустановить его вот так чаще всего "
+            "помогает от этих причудливых фиаско"
+        )
+        self.assertTrue(
+            unrequested_advice(text, "Принтер опять три пустых листа выдал")
+        )
+        self.assertEqual(
+            drop_unrequested_advice(text),
+            "Твои принтеры — это перфекционисты в области белых пятен",
+        )
+        self.assertFalse(
+            unrequested_advice(text, "Принтер печатает пустые листы, что делать?")
+        )
+
+    async def test_joke_does_not_get_unrequested_diagnostics(self):
+        joke = "Твои принтеры — это перфекционисты в области белых пятен"
+        advice = (
+            "Проверь уровень чернил и запусти цикл очистки печатающей головки. "
+            "Если не поможет, переустанови драйвер полностью и сбрось настройки печати."
+        )
+        with tempfile.TemporaryDirectory() as root:
+            async with Database(Path(root) / "joke.db") as db:
+                bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(
+                    id=9, username="ponyeb228_bot",
+                )))
+                llm = SimpleNamespace(generate=AsyncMock(side_effect=[
+                    joke + "\n" + advice,
+                    joke,
+                ]))
+                message = SimpleNamespace(
+                    chat=SimpleNamespace(id=1, type="private"), message_id=2,
+                    from_user=SimpleNamespace(id=42, username="kent"),
+                    text="Принтер опять три пустых листа выдал",
+                    caption=None, photo=None, sticker=None, reply_to_message=None,
+                )
+                with (
+                    patch("sanya.services.chat.send_burst_messages", AsyncMock(return_value=[3])) as send,
+                    patch("sanya.services.chat.keep_typing", AsyncMock()),
+                    patch("sanya.services.chat.lookup_snippets", AsyncMock(return_value="")),
+                ):
+                    await process_chat_message(message, bot, db=db, llm=llm)
+                self.assertEqual(llm.generate.await_count, 2)
+                self.assertEqual(send.await_args.args[3], joke)
+
+    async def test_joke_advice_is_trimmed_when_retry_repeats_it(self):
+        joke = "Твои принтеры — это перфекционисты в области белых пятен"
+        advice = (
+            "Проверь уровень чернил и запусти цикл очистки печатающей головки. "
+            "Если не поможет, переустанови драйвер полностью и сбрось настройки печати."
+        )
+        with tempfile.TemporaryDirectory() as root:
+            async with Database(Path(root) / "joke.db") as db:
+                bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(
+                    id=9, username="ponyeb228_bot",
+                )))
+                llm = SimpleNamespace(generate=AsyncMock(side_effect=[
+                    joke + "\n" + advice,
+                    joke + "\n" + advice,
+                ]))
+                message = SimpleNamespace(
+                    chat=SimpleNamespace(id=1, type="private"), message_id=2,
+                    from_user=SimpleNamespace(id=42, username="kent"),
+                    text="Принтер опять три пустых листа выдал",
+                    caption=None, photo=None, sticker=None, reply_to_message=None,
+                )
+                with (
+                    patch("sanya.services.chat.send_burst_messages", AsyncMock(return_value=[3])) as send,
+                    patch("sanya.services.chat.keep_typing", AsyncMock()),
+                    patch("sanya.services.chat.lookup_snippets", AsyncMock(return_value="")),
+                ):
+                    await process_chat_message(message, bot, db=db, llm=llm)
+                self.assertEqual(llm.generate.await_count, 2)
+                self.assertEqual(send.await_args.args[3], joke)
+
+    async def test_explicit_repair_request_keeps_diagnostics(self):
+        advice = (
+            "Проверь уровень чернил и запусти цикл очистки печатающей головки. "
+            "Если не поможет, переустанови драйвер и сбрось настройки печати."
+        )
+        with tempfile.TemporaryDirectory() as root:
+            async with Database(Path(root) / "joke.db") as db:
+                bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(
+                    id=9, username="ponyeb228_bot",
+                )))
+                llm = SimpleNamespace(generate=AsyncMock(return_value=advice))
+                message = SimpleNamespace(
+                    chat=SimpleNamespace(id=1, type="private"), message_id=2,
+                    from_user=SimpleNamespace(id=42, username="kent"),
+                    text="Принтер печатает пустые листы, что делать?",
+                    caption=None, photo=None, sticker=None, reply_to_message=None,
+                )
+                with (
+                    patch("sanya.services.chat.send_burst_messages", AsyncMock(return_value=[3])) as send,
+                    patch("sanya.services.chat.keep_typing", AsyncMock()),
+                    patch("sanya.services.chat.lookup_snippets", AsyncMock(return_value="")),
+                ):
+                    await process_chat_message(message, bot, db=db, llm=llm)
+                self.assertEqual(llm.generate.await_count, 1)
+                self.assertIn("Проверь уровень чернил", send.await_args.args[3])
+
     async def test_topic_deflection_retries_once_without_old_history(self):
         with tempfile.TemporaryDirectory() as root:
             async with Database(Path(root) / "topic.db") as db:

@@ -124,6 +124,38 @@ _GPU_REVIEW_PROMPT = (
 )
 
 
+_HELP_REQUEST = re.compile(
+    r"\b(?:как|почему|зачем|что\s+делать|помоги\w*|подскажи\w*|объясни\w*|"
+    r"расскажи\w*|почини\w*|починить|ремонт\w*|не\s+работает|сломал\w*|"
+    r"ошибк\w*|стоит\s+ли|можно\s+ли|чем\s+заменить)\b",
+    re.I,
+)
+_ADVICE_MARKERS = re.compile(
+    r"\b(?:проверь\w*|попробуй\w*|переустанов\w*|перезапуст\w*|почист\w*|"
+    r"прочист\w*|замени\w*|сбрось\w*|сброс\w*|обнови\w*|настрой\w*|"
+    r"драйвер\w*|профилактик\w*|диагностик\w*)\b",
+    re.I,
+)
+
+
+def unrequested_advice(text: str, question: str) -> bool:
+    if "?" in question or _HELP_REQUEST.search(question):
+        return False
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return any(
+        len(line) > 120 and _ADVICE_MARKERS.search(line) for line in lines[1:]
+    )
+
+
+def drop_unrequested_advice(text: str) -> str:
+    kept = [
+        line
+        for line in text.splitlines()
+        if not (len(line.strip()) > 120 and _ADVICE_MARKERS.search(line))
+    ]
+    return "\n".join(kept).strip() or text
+
+
 _DEFINITION_PROMPT = (
     "Ты Саня, кореш в конфе. Объясни значение слова своими словами, "
     "одной-двумя короткими репликами, как в живом разговоре. "
@@ -1112,6 +1144,13 @@ async def process_chat_message(
                 and (not force_gpu_query or len(text) <= _GPU_REVIEW_LIMIT)
             )
 
+        advice_retry = bool(
+            mode is Mode.CHAT
+            and not rofl
+            and not safe
+            and unrequested_advice(result, query_text)
+        )
+
         if (
             can_search
             and not rofl
@@ -1130,7 +1169,7 @@ async def process_chat_message(
             if snippets:
                 search_context = snippets
                 result, emoji, sticker, _ = await generate(search_context)
-        if not valid_result(result) or (safe and not safe_reply(result)):
+        if not valid_result(result) or advice_retry or (safe and not safe_reply(result)):
             logging.info(
                 "Reply render rejected mode=%s rofl=%s empty_raw=%s; retrying",
                 mode.name,
@@ -1167,6 +1206,11 @@ async def process_chat_message(
                     if code_only
                     else "Соблюди формат и закончи ответ целиком."
                 )
+            elif advice_retry:
+                correction = (
+                    "Сейчас это шутка или бытовая жалоба. Ответь одной-двумя короткими "
+                    "репликами по ситуации; не добавляй диагностику, советы и списки проверок."
+                )
             else:
                 correction = "Дай законченный ответ без служебных меток."
             if safe:
@@ -1195,6 +1239,8 @@ async def process_chat_message(
                 if style.tone == 0
                 else "Че за фимозные фантазии\nСам с ними разбирайся"
             )
+        if mode is Mode.CHAT and not rofl and not safe and unrequested_advice(result, query_text):
+            result = drop_unrequested_advice(result)
         if not valid_result(result):
             logging.warning("Reply render fallback mode=%s rofl=%s", mode.name, rofl)
             sticker = False
