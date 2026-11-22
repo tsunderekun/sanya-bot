@@ -220,6 +220,19 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(text=text):
                 self.assertIsNot(classify_intent(text), Mode.CODE)
 
+    def test_detail_bot_trigger_does_not_match_inside_other_words(self):
+        for text, mode in (
+            ("Принтер сегодня работает в жанре минимализма", Mode.CHAT),
+            ("Суббота у лифта выходная", Mode.CHAT),
+            ("Почему молчит бот?", Mode.DETAIL),
+            ("Вопрос по боту", Mode.DETAIL),
+            ("Что там с чат-ботами?", Mode.DETAIL),
+            ("Принтер печатает пустые листы. Что проверить первым?", Mode.CHAT),
+            ("Как починить принтер, если он печатает пустые листы?", Mode.DETAIL),
+        ):
+            with self.subTest(text=text):
+                self.assertIs(classify_intent(text), mode)
+
     def test_router_builds_twice(self):
         self.assertEqual(build_dispatcher().resolve_used_update_types(), ["callback_query", "channel_post", "message"])
         self.assertEqual(build_dispatcher().resolve_used_update_types(), ["callback_query", "channel_post", "message"])
