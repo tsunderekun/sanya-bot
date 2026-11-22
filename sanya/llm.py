@@ -244,6 +244,7 @@ class Ollama:
         payload = {
             "model": VISION_MODEL_NAME,
             "stream": False,
+            "think": False,
             "keep_alive": 0,
             "messages": [
                 {

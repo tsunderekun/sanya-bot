@@ -45,6 +45,22 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(requests[0]["think"])
         self.assertEqual(requests[0]["options"]["num_predict"], 420)
 
+    async def test_vision_request_disables_thinking(self):
+        requests = []
+
+        def server(request):
+            requests.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={"message": {"content": "На фото машина"}, "done_reason": "stop"},
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(server)) as client:
+            answer = await Ollama(client).describe_image(b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(answer, "На фото машина")
+        self.assertFalse(requests[0]["think"])
+        self.assertEqual(len(requests[0]["messages"][0]["images"]), 1)
+
     async def test_empty_thinking_fallback_keeps_code_budget(self):
         requests = []
 
