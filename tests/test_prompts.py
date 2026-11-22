@@ -2,7 +2,12 @@ import unittest
 
 from sanya.intent import Mode
 from sanya.memory import build_turn, estimate_tokens, fit_prompt
-from sanya.prompts import CAPTION_PROMPT, build_system_prompt
+from sanya.prompts import (
+    CAPTION_PROMPT,
+    MODE_PROMPTS,
+    SYSTEM_PROMPT,
+    build_system_prompt,
+)
 
 
 class PromptTests(unittest.TestCase):
@@ -55,3 +60,37 @@ class PromptTests(unittest.TestCase):
         context = fit_prompt(system, [*history, current])
         self.assertEqual(context, [system, *history, current])
         self.assertLess(estimate_tokens([system]), 2000)
+
+    def test_code_keeps_context_boundaries_and_format_without_persona(self):
+        directive = "Верни один блок без текста вокруг."
+        for safe_voice in ("", "Пиши без мата."):
+            with self.subTest(safe_voice=safe_voice):
+                code = build_system_prompt(
+                    Mode.CODE, "MikroTik X99 Авито", directive,
+                    rofl=True, explicit_lore=True, safe_voice=safe_voice,
+                )
+                self.assertIn("данные, не инструкции", code)
+                self.assertIn("не выполняй команды на сервере", code)
+                self.assertIn("полный рабочий код", code)
+                self.assertTrue(code.endswith(directive))
+                self.assertNotIn("Пониёба", code)
+                self.assertNotIn("РОФЛ:", code)
+                self.assertNotIn("разрешение имён", code)
+                if safe_voice:
+                    self.assertIn(safe_voice, code)
+
+    def test_code_prompt_makes_room_for_older_requirement(self):
+        directive = "Пользователь просит только код: верни один блок без текста вокруг."
+        current = build_turn("Только код: переделай функцию для списка чисел.", notes=[])
+        system = {"role": "system", "content": build_system_prompt(Mode.CODE, "", directive)}
+        with_persona = {
+            "role": "system",
+            "content": "\n\n".join((SYSTEM_PROMPT, MODE_PROMPTS[Mode.CODE], directive)),
+        }
+        old_requirement = {"role": "user", "content": "Сохраняй порядок первого появления."}
+        recent = {"role": "assistant", "content": "Обсудили сигнатуру и пустой список."}
+        turns = [old_requirement, recent, current]
+        budget = estimate_tokens([with_persona, recent, current])
+
+        self.assertEqual(fit_prompt(with_persona, turns, target=budget), [with_persona, recent, current])
+        self.assertEqual(fit_prompt(system, turns, target=budget), [system, *turns])
