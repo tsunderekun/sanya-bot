@@ -2,6 +2,7 @@ import logging
 import random
 import re
 import sqlite3
+from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 from .config import MAX_CONTEXT_CHARS, MAX_HISTORY, TOP_STICKERS_CHANCE
@@ -20,11 +21,48 @@ class AmbiguousUsername(ValueError):
     pass
 
 
+class ImageQuota(Enum):
+    RESERVED = "reserved"
+    USER_LIMIT = "user_limit"
+    GLOBAL_LIMIT = "global_limit"
+
+
 class Repository:
     """Управление постоянной памятью диалогов в SQLite с WAL-режимом и автосбросом при перегрузе."""
 
     def __init__(self, connection: sqlite3.Connection):
         self.connection = connection
+
+    def reserve_image_generation(
+        self, day_utc: str, limit: int, user_id: int, user_limit: int | None
+    ) -> ImageQuota:
+        with self.connection as conn:
+            # The first write serializes quota checks across SQLite connections.
+            conn.execute("DELETE FROM image_generation_quota WHERE day_utc < ?", (day_utc,))
+            conn.execute("DELETE FROM image_generation_user_quota WHERE day_utc < ?", (day_utc,))
+            if user_limit is not None:
+                usage = conn.execute(
+                    "SELECT attempts FROM image_generation_user_quota WHERE day_utc = ? AND user_id = ?",
+                    (day_utc, user_id),
+                ).fetchone()
+                if user_limit < 1 or (usage is not None and usage[0] >= user_limit):
+                    return ImageQuota.USER_LIMIT
+            if limit < 1:
+                return ImageQuota.GLOBAL_LIMIT
+            if not conn.execute(
+                "INSERT INTO image_generation_quota (day_utc, attempts) VALUES (?, 1) "
+                "ON CONFLICT(day_utc) DO UPDATE SET attempts = attempts + 1 "
+                "WHERE attempts < ?",
+                (day_utc, limit),
+            ).rowcount:
+                return ImageQuota.GLOBAL_LIMIT
+            if user_limit is not None:
+                conn.execute(
+                    "INSERT INTO image_generation_user_quota (day_utc, user_id, attempts) VALUES (?, ?, 1) "
+                    "ON CONFLICT(day_utc, user_id) DO UPDATE SET attempts = attempts + 1",
+                    (day_utc, user_id),
+                )
+        return ImageQuota.RESERVED
 
     def save_channel_meme(
         self, channel_id, message_id, media_type, file_id, file_unique_id

@@ -1,6 +1,7 @@
 import re
 
 from aiogram import F, Router, types
+from aiogram.enums import ChatType
 from aiogram.filters import Command
 
 from ..intent import Mode
@@ -11,6 +12,7 @@ from ..services.booru_confirmation import (
     confirm_booru,
     confirm_prompt_idea,
 )
+from ..services.image_generation import MAX_PROMPT, ImageGeneration
 from ..services.queue import RequestQueue
 from ..services.safe_mode import IDEA_DISABLED, safe_mode
 from ..services.stickers import try_react_whale
@@ -46,6 +48,23 @@ async def cmd_pic(message: types.Message, requests: RequestQueue, db=None):
         await enqueue_command(message, requests, force_booru_query=args)
     else:
         await enqueue_command(message, requests, force_image_query=args)
+
+
+async def cmd_draw(message: types.Message, image_generation: ImageGeneration | None = None):
+    if message.chat.type != ChatType.PRIVATE or message.from_user is None:
+        return
+    if image_generation is None:
+        await message.reply("Генерация картинок пока выключена.")
+        return
+    # Only use explicit text from this command, never a caption, reply or chat history.
+    parts = (message.text or "").split(maxsplit=1)
+    prompt = parts[1].strip() if len(parts) == 2 else ""
+    if not prompt:
+        await message.reply("Опиши сцену после команды: /нарисуй трамвай под зелёным зонтом.")
+    elif len(prompt) > MAX_PROMPT:
+        await message.reply(f"Сократи описание до {MAX_PROMPT} символов.")
+    elif not image_generation.start(message, prompt):
+        await message.reply("Уже рисую другую картинку. Попробуй чуть позже.")
 
 
 async def cmd_booru(message: types.Message, requests: RequestQueue, db=None):
@@ -102,6 +121,7 @@ def make_router() -> Router:
     router.message.register(cmd_slop, Command("slop", "слоп"))
     router.message.register(cmd_code, Command("code", "код"))
     router.message.register(cmd_prompt, Command("prompt", "промпт"))
+    router.message.register(cmd_draw, Command("draw", "нарисуй"), F.chat.type == ChatType.PRIVATE)
     router.message.register(cmd_prompt_idea, Command("promptidea", "идея"))
     router.message.register(
         cmd_search,

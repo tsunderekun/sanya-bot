@@ -3,6 +3,20 @@ from .lore import INITIAL_CHATS_LORE, INITIAL_KENTS_PROFILES
 
 def initialize(conn):
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS image_generation_quota (
+            day_utc TEXT PRIMARY KEY,
+            attempts INTEGER NOT NULL CHECK (attempts > 0)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS image_generation_user_quota (
+            day_utc TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            attempts INTEGER NOT NULL CHECK (attempts > 0),
+            PRIMARY KEY (day_utc, user_id)
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS chat_blocked_kents (
             chat_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL,

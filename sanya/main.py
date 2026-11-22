@@ -43,6 +43,7 @@ from .handlers import (
 )
 from .llm import Ollama
 from .services.chat import process_chat_message
+from .services.image_generation import FluxClient, ImageGeneration
 from .services.queue import RequestQueue
 from .services.search import lookup_search_evidence
 from .services.stickers import sync_sticker_packs
@@ -105,6 +106,17 @@ async def main():
     ):
         await register_commands(bot)
         llm = Ollama(client)
+        image_generation = None
+        if os.getenv("IMAGE_GENERATION_ENABLED", "") == "1":
+            try:
+                flux = FluxClient(
+                    client,
+                    os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip(),
+                    os.getenv("CLOUDFLARE_API_TOKEN", "").strip(),
+                )
+                image_generation = ImageGeneration(flux, db, llm)
+            except ValueError:
+                logging.warning("Image generation disabled: invalid Workers AI configuration")
         requests = RequestQueue(search=lookup_search_evidence if ENABLE_WEB_SEARCH else None)
         meme_precache = memes.MemePrecache()
         voice = PiperVoiceReplies(Path(PIPER_MODEL_PATH)) if PIPER_MODEL_PATH else None
@@ -120,10 +132,13 @@ async def main():
                 llm=llm,
                 requests=requests,
                 meme_precache=meme_precache,
+                image_generation=image_generation,
             )
         finally:
             worker.cancel()
             sync.cancel()
+            if image_generation is not None:
+                await image_generation.close()
             await asyncio.gather(
                 worker,
                 sync,
