@@ -63,6 +63,11 @@ _CHAT_SLASH = re.compile(
     r"|(?<=[А-Яа-яЁё.!?])[ \t]+/[ \t]+(?=[А-ЯЁ][а-яё]*\b)"
     r"|(?<=[а-яё])/(?=(?:А|Но|Если|Когда|Зато|Поэтому)[ \t]+)"
 )
+# Chat replies imitate typed messages, so drop Markdown emphasis instead of rendering it.
+_CHAT_EMPHASIS = re.compile(
+    r"(?<!\*)\*\*(?!\s)([^*\n]+?)(?<!\s)\*\*(?!\*)"
+    r"|(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)"
+)
 _CELL_SEPARATOR = re.compile(r"\\(.)|(\|)")
 _ALIGNMENT = re.compile(r":?-{3,}:?")
 _TABLE_INLINE = re.compile(
@@ -304,6 +309,11 @@ def clean_response(
             body = re.sub(r"\[([^\[\]\n]+)\]\((https?://[^\s)]+)\)", r"\1 (\2)", body)
             body = body.translate(BRACKETS)
             body = _CHAT_PROMPT_ECHO.sub("", body)
+            if mode is Mode.CHAT or (
+                mode is Mode.DETAIL
+                and not any(kind == "table" for kind, _ in _table_parts(body))
+            ):
+                body = _CHAT_EMPHASIS.sub(lambda match: match[1] or match[2], body)
         if mode is Mode.CHAT and not any(
             kind == "table" for kind, _ in _table_parts(body)
         ):

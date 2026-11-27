@@ -35,6 +35,27 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("Negative prompt:", chat)
         self.assertNotIn("ZOV", build_system_prompt(Mode.CHAT, "своё мнение"))
 
+    def test_chat_prompt_blocks_neural_net_style(self):
+        chat = build_system_prompt(Mode.CHAT, "Как сварить рис?")
+        detail = build_system_prompt(Mode.DETAIL, "Как сварить рис?")
+        for prompt in (chat, detail):
+            self.assertIn("Не пиши как нейросеть", prompt)
+            self.assertIn("«не просто X, а Y»", prompt)
+            self.assertIn("Длину строк меняй", prompt)
+            self.assertNotIn("**", prompt)
+            self.assertNotIn("###", prompt)
+        for mode in (Mode.CODE, Mode.PROMPT):
+            self.assertNotIn("Не пиши как нейросеть", build_system_prompt(mode))
+        self.assertIn("без жирного шрифта", detail)
+        self.assertIn("нумерованных списков", detail)
+
+    def test_gpu_review_prompt_avoids_bold_section_template(self):
+        from sanya.services.chat import _GPU_REVIEW_PROMPT
+
+        self.assertNotIn("**", _GPU_REVIEW_PROMPT)
+        self.assertNotIn("три коротких пункта", _GPU_REVIEW_PROMPT)
+        self.assertIn("без заголовков, жирного и списков", _GPU_REVIEW_PROMPT)
+
     def test_network_lore_is_relevant_and_does_not_repeat_general_guidance(self):
         prompt = build_system_prompt(Mode.CHAT, "как настроить DNS")
         self.assertIn("DNS в сетях — разрешение имён", prompt)

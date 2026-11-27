@@ -161,6 +161,15 @@ class GenerationTests(unittest.IsolatedAsyncioTestCase):
         code = '```python\nprint("да / Нет")\n```'
         self.assertEqual(clean_response(code, Mode.CODE)[0], code)
 
+    def test_chat_and_detail_drop_markdown_emphasis_but_keep_math(self):
+        self.assertEqual(
+            clean_response("Это **база** и *норм*", Mode.CHAT)[0], "Это база и норм"
+        )
+        self.assertEqual(clean_response("2 * 4 * 5", Mode.CHAT)[0], "2 * 4 * 5")
+        self.assertEqual(clean_response("Это **база**", Mode.DETAIL)[0], "Это база")
+        table = "| A | B |\n| --- | --- |\n| **x** | y |"
+        self.assertIn("**x**", clean_response(table, Mode.DETAIL)[0])
+
     def test_render_uses_emoji_only_as_sticker_hint(self):
         reply = "ну вот приехали 😁\nдавай покажи что случилось 1️⃣\n[стикер: 😵‍💫]"
         self.assertEqual(
